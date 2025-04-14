@@ -6,19 +6,19 @@ import { getFirestore } from "firebase/firestore";
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyCx9H2UHLCCO2GgUAw8n2JJc-f2s5QEKYY",
-  authDomain: "job-matcher-b6aec.firebaseapp.com",
-  projectId: "job-matcher-b6aec",
-  storageBucket: "job-matcher-b6aec.firebasestorage.app",
-  messagingSenderId: "828528390854",
-  appId: "1:828528390854:web:78e8d961bad39a65f51dc7",
-  measurementId: "G-HBNJGDF6E4"
+  apiKey: "AIzaSyA4v-MoNd_65i6XCztTH-22hr0PhP-NfTY",
+  authDomain: "job-matcher-9c692.firebaseapp.com",
+  projectId: "job-matcher-9c692",
+  storageBucket: "job-matcher-9c692.firebasestorage.app",
+  messagingSenderId: "71568991044",
+  appId: "1:71568991044:web:1dbd9fc05deb5495606d11",
+  measurementId: "G-W4XCW1G14V"
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(firebaseApp);
+const db = getFirestore(app);
 //const analytics = getAnalytics(app);
 
-export { auth, db, firebaseApp }; 
+export { auth, db, app }; 
