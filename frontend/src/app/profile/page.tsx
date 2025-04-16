@@ -1,4 +1,3 @@
-// frontend/src/app/profile/page.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -129,7 +128,6 @@ export default function ProfilePage() {
             setSuccessMessage("Skills updated successfully!");
              setTimeout(() => setSuccessMessage(null), 3000); // Clear success message after 3s
 
-            // Optionally re-sync local state if backend modifies data (unlikely here)
             // setSkills(updatedData.skills);
 
         } catch (err: any) {
@@ -143,12 +141,10 @@ export default function ProfilePage() {
 
     // --- Render Logic ---
     if (authLoading || loadingProfile) {
-        return <div className="flex justify-center items-center min-h-screen">Loading Profile...</div>; // Or a proper spinner
+        return <div className="flex justify-center items-center min-h-screen">Loading Profile...</div>; // 
     }
 
     if (!user) {
-        // This should ideally not be reached due to the redirect effect,
-        // but serves as a fallback.
         return <div className="flex justify-center items-center min-h-screen">Redirecting to login...</div>;
     }
 

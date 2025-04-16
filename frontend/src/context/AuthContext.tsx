@@ -1,9 +1,8 @@
-// frontend/src/context/AuthContext.tsx
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { onAuthStateChanged, User, signOut } from 'firebase/auth';
-import { auth } from '@/lib/firebase/config'; // Adjust path if needed
+import { auth } from '@/lib/firebase/config'; 
 import { useRouter } from 'next/navigation';
 
 // Define the shape of the context data
@@ -41,7 +40,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   // Logout function
   const logout = async () => {
-    setLoading(true); // Optional: show loading state during logout
+    setLoading(true); 
     try {
         await signOut(auth);
         // onAuthStateChanged will handle setting user to null
@@ -62,12 +61,6 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loading,
     logout
   };
-
-  // Render children only after initial loading is complete to prevent flashes
-  // Or show a loading spinner globally
-  // if (loading) {
-  //   return <div>Loading Authentication...</div>; // Or a spinner component
-  // }
 
   return (
     <AuthContext.Provider value={value}>

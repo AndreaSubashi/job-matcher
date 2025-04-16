@@ -1,8 +1,7 @@
-// frontend/src/app/dashboard/page.tsx
 'use client'; // Needs to be a client component to use hooks
 
 import React, { useEffect } from 'react';
-import { useAuth } from '@/context/AuthContext'; // Import the custom hook
+import { useAuth } from '@/context/AuthContext'; 
 import { useRouter } from 'next/navigation';
 
 export default function DashboardPage() {
@@ -12,14 +11,12 @@ export default function DashboardPage() {
   // Effect to redirect if user is not logged in after loading
   useEffect(() => {
     if (!loading && !user) {
-      // Redirect to login page if not loading and no user
       router.push('/login');
     }
   }, [user, loading, router]); // Dependencies
 
-  // Show loading state
   if (loading) {
-    return <div>Loading...</div>; // Or a spinner component
+    return <div>Loading...</div>; 
   }
 
   // If loading is finished and still no user, router.push should have initiated redirect
@@ -37,7 +34,7 @@ export default function DashboardPage() {
 
       {/* Logout Button */}
       <button
-        onClick={logout} // Call the logout function from context
+        onClick={logout} 
         className="px-4 py-2 mt-4 font-bold text-white bg-red-500 rounded hover:bg-red-700"
       >
         Logout

@@ -1,9 +1,9 @@
-# backend/main.py
-from fastapi import FastAPI, Depends, HTTPException, status, Header # Added Depends, HTTPException, status, Header
+
+from fastapi import FastAPI, Depends, HTTPException, status, Header 
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field # Import Pydantic BaseModel and Field
-from typing import List, Annotated, Optional # Import List and Annotated
-from datetime import datetime # <--- IMPORT THIS
+from pydantic import BaseModel, Field 
+from typing import List, Annotated, Optional 
+from datetime import datetime #added because of an error when trying to interpret date/time as a string instead of date/time
 
 import firebase_admin
 from firebase_admin import credentials, auth, firestore # Import auth and firestore
@@ -16,8 +16,6 @@ try:
     print("Firebase Admin SDK initialized successfully.")
 except Exception as e:
     print(f"Error initializing Firebase Admin SDK: {e}")
-    # Depending on your setup, you might want to exit or handle this differently
-    # raise e # Re-raise if you want the app to fail on init error
 
 # Get Firestore client
 try:
@@ -31,7 +29,7 @@ except Exception as e:
 
 app = FastAPI()
 
-# Configure CORS (as before)
+# Configure CORS 
 origins = [
     "http://localhost:3000",
 ]
@@ -88,7 +86,7 @@ async def get_current_user(authorization: Annotated[str | None, Header()] = None
             headers={"WWW-Authenticate": "Bearer"},
         )
     except Exception as e:
-        print(f"Token verification failed: {e}") # Log other errors
+        print(f"Token verification failed: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Could not verify token",
@@ -104,8 +102,8 @@ class UserProfileResponse(BaseModel):
     email: Optional[str] = None
     displayName: Optional[str] = None
     photoURL: Optional[str] = None
-    createdAt: Optional[datetime] = None # Or use datetime
-    skills: List[str] = Field(default_factory=list) # Use default_factory for empty lists
+    createdAt: Optional[datetime] = None # here
+    skills: List[str] = Field(default_factory=list) # default_factory for empty lists
     education: List[dict] = Field(default_factory=list)
     experience: List[dict] = Field(default_factory=list)
 # --- API Endpoints ---
@@ -135,16 +133,10 @@ async def get_user_profile(
 
         if user_doc.exists:
             profile_data = user_doc.to_dict()
-            # Ensure default empty lists if fields are missing
-            #profile_data.setdefault("skills", [])
-            #profile_data.setdefault("education", [])
-            #profile_data.setdefault("experience", [])
-            # Add uid which might not be stored in the doc itself
             profile_data["uid"] = current_user.get("uid")
             return UserProfileResponse(**profile_data)
         else:
-             # Optionally create a basic profile if it's missing but shouldn't be?
-             # Or just return 404
+             #return 404
              print(f"Profile document not found for UID: {user_uid}")
              raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
 

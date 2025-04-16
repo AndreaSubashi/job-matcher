@@ -1,16 +1,14 @@
-// frontend/src/app/signup/page.tsx
 'use client';
 
 import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
-// Import necessary Firebase auth functions
 import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider, // Import Google Auth Provider
   signInWithPopup     // Import Popup sign-in method
 } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase/config'; // Adjust path if needed
-import { doc, setDoc, getDoc } from "firebase/firestore"; // Import Firestore functions
+import { auth, db } from '@/lib/firebase/config'; 
+import { doc, setDoc, getDoc } from "firebase/firestore"; 
 
 export default function SignupPage() {
   const [email, setEmail] = useState('');
@@ -41,7 +39,6 @@ export default function SignupPage() {
           console.log("Created new user profile in Firestore for:", user.email);
       } else {
            console.log("User profile already exists during signup check for:", user.email);
-           // Optionally update fields if needed, though usually not on signup
       }
   }
 
