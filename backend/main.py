@@ -123,6 +123,20 @@ class ExperienceItem(BaseModel):
 class ExperienceUpdateRequest(BaseModel):
     experience: List[ExperienceItem]
 
+class Job(BaseModel):
+    id: str # Document ID from Firestore
+    title: str
+    company: str
+    location: Optional[str] = None
+    description: Optional[str] = None
+    requiredSkills: List[str] = Field(default_factory=list)
+    # Add other fields like url, datePosted later if needed
+
+# NEW: Model representing a Job returned after matching, includes a score
+class MatchedJob(Job): # Inherits fields from Job
+    matchScore: float = Field(..., example=0.75) # Add the match score (e.g., 0.0 to 1.0)
+
+
 class UserProfileResponse(BaseModel):
     uid: str
     email: Optional[str] = None
@@ -133,6 +147,33 @@ class UserProfileResponse(BaseModel):
     education: List[EducationItem] = Field(default_factory=list)
     experience: List[ExperienceItem] = Field(default_factory=list)
 
+
+def calculate_match_score(user_skills: List[str], job_skills: List[str]) -> float:
+    """
+    Calculates a simple match score based on skill overlap.
+    Score = (Number of matching skills) / (Total number of required job skills)
+    Returns a float between 0.0 and 1.0.
+    """
+
+    # Use sets for efficient intersection finding, case-insensitive comparison
+    user_skills_set = set(skill.lower() for skill in user_skills)
+    job_skills_set = set(skill.lower() for skill in job_skills)
+
+    matching_skills = user_skills_set.intersection(job_skills_set)
+    score = len(matching_skills) / len(job_skills_set)
+
+    # --- ADD DEBUG LOGGING ---
+    print(f"--- Score Calculation ---")
+    print(f"User Skills Set: {user_skills_set}")
+    print(f"Job Skills Set: {job_skills_set}")
+    print(f"Matching Skills: {matching_skills}")
+    print(f"Score: {score:.2f}") # Format score
+    print(f"-----------------------")
+    # --- END DEBUG LOGGING ---
+    return score
+
+    if not job_skills:
+        return 0.0 # Or 1.0 if no skills required means perfect match? Decide business logic. Let's say 0.
 # --- API Endpoints ---
 @app.get("/")
 async def read_root():
@@ -285,4 +326,100 @@ async def update_user_experience(
         # import traceback
         # traceback.print_exc() # Uncomment for detailed traceback during debugging
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update experience")
-# --- Add job matching later ---
+
+# --- Job Matching Endpoint ---
+@app.get("/api/jobs/match", response_model=List[MatchedJob]) # Return a list of MatchedJob
+async def get_job_matches(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    min_score_threshold: float = 0.25 # Optional query parameter for minimum score
+):
+    """
+    Fetches jobs, matches them against the authenticated user's skills,
+    and returns a ranked list of jobs exceeding the score threshold.
+    """
+    if db is None:
+         raise HTTPException(status_code=503, detail="Firestore service unavailable")
+
+    user_uid = current_user.get("uid")
+    print(f"\n=== Starting Job Match for User: {user_uid} ===") # Log start
+    if not user_uid:
+         raise HTTPException(status_code=400, detail="User ID not found in token")
+
+    matched_jobs = []
+
+    try:
+        # 1. Fetch User Profile (specifically skills)
+        user_doc_ref = db.collection("users").document(user_uid)
+        user_doc = user_doc_ref.get()
+        user_profile_data = user_doc.to_dict()
+        user_skills = user_profile_data.get("skills", [])
+        print(f"[DEBUG] User Skills Fetched: {user_skills}")
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User profile not found, cannot match jobs.")
+
+        if not user_skills:
+             print(f"User {user_uid} has no skills listed, returning empty match list.")
+             return [] # No skills to match with
+
+        # 2. Fetch All Job Listings
+        print("[DEBUG] Attempting to fetch 'jobs' collection...")
+        jobs_ref = db.collection("jobs")
+        job_docs = jobs_ref.stream() # Use stream() for potentially large collections
+        print(f"[DEBUG] Got job stream object: {job_docs}")
+        job_count = 0 # Counter for logging
+
+        # 3. Calculate Score for Each Job
+        for job_doc in job_docs:
+            print("[DEBUG] Entering loop to process job documents...")
+            job_count += 1
+            job_data = job_doc.to_dict()
+            job_data["id"] = job_doc.id # Add the document ID to the job data
+
+            # Basic validation/defaults
+            job_data.setdefault("requiredSkills", [])
+            job_data.setdefault("title", "N/A")
+            job_data.setdefault("company", "N/A")
+
+            required_skills = job_data.get("requiredSkills", [])
+            # --- ADD DEBUG LOGGING ---
+            print(f"[DEBUG] Job {job_count} ({job_doc.id}): Title='{job_data.get('title', 'N/A')}', Required Skills={required_skills}")
+            # --- END DEBUG LOGGING ---
+
+            score = calculate_match_score(user_skills, required_skills)
+
+            # 4. Filter by Threshold
+            print(f"[DEBUG] Job {job_doc.id} Score: {score:.2f} (Threshold: {min_score_threshold})")
+            if score >= min_score_threshold:
+                 # Create a MatchedJob object (inherits Job fields, adds score)
+                 # Ensure job_data has all fields required by Job model before unpacking
+                 print(f"[DEBUG] Job {job_doc.id} PASSED threshold.") # Log pass
+                 try:
+                    matched_job_data = {
+                        **job_data, # Spread job data
+                        "matchScore": score
+                    }
+                    # Validate against MatchedJob model before adding
+                    matched_jobs.append(MatchedJob(**matched_job_data))
+                 except Exception as validation_error: # Catch potential Pydantic validation errors
+                     print(f"Skipping job {job_doc.id} due to validation error: {validation_error}")
+                     print(f"Job data was: {job_data}")
+
+        # Add a check *after* the loop
+        if job_count == 0:
+             print("[DEBUG] Loop finished without processing any jobs (check if 'jobs' collection exists and has documents).") #<-- ADD THIS LINE
+
+        # 5. Rank Results (Higher score first)
+        matched_jobs.sort(key=lambda job: job.matchScore, reverse=True)
+
+        print(f"Found {len(matched_jobs)} job matches for user {user_uid} with threshold {min_score_threshold}")
+        return matched_jobs
+
+    except Exception as e:
+        print(f"Error during job matching for {user_uid}: {e}")
+        # import traceback
+        # traceback.print_exc() # Uncomment for detailed traceback
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not perform job matching")
+    
+
+
+
