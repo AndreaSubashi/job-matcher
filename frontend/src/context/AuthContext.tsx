@@ -45,7 +45,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         await signOut(auth);
         // onAuthStateChanged will handle setting user to null
         console.log("User logged out successfully");
-        router.push('/login'); // Redirect to login after logout
+        router.push('/'); // Redirect to login after logout
     } catch (error) {
         console.error("Logout failed:", error);
         // Handle logout error if needed

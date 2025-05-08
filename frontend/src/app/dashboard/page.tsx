@@ -42,24 +42,16 @@ export default function DashboardPage() {
       </button>
 
       {/* Add links to profile, find jobs etc. */}
-      <div className="mt-6">
-          <a href="/profile" className="text-indigo-600 hover:text-indigo-800">Go to Profile</a>
-          {/* Add link to Find Jobs later */}
-      </div>
-    </div>
-  );
-  
-  return (
-    <div className="p-4">
-        {/* ... welcome message, user info, logout button ... */}
-        <div className="mt-6 space-x-4">
+      <div className="mt-6 space-x-4">
             <Link href="/profile" className="text-indigo-600 hover:text-indigo-800">
               Go to Profile
             </Link>
              <Link href="/job-matches" className="text-green-600 hover:text-green-800 font-semibold">
               Find Job Matches
             </Link>
-        </div>
+      </div>
     </div>
   );
+  
+
 }
