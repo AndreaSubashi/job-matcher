@@ -1,185 +1,248 @@
+# backend/main.py
 import os
 import pandas as pd
 import ast # For parsing stringified lists like '["skill1", "skill2"]'
-from fastapi import FastAPI, Depends, HTTPException, status, Header 
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field 
-from typing import List, Annotated, Optional 
-from datetime import datetime #added because of an error when trying to interpret date/time as a string instead of date/time
 from uuid import UUID, uuid4
-from dotenv import load_dotenv 
-from sentence_transformers import SentenceTransformer, util # Import sentence-transformers
-import torch # Import torch
+from fastapi import FastAPI, Depends, HTTPException, status, Header
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import List, Annotated, Optional
+from datetime import datetime
+from dotenv import load_dotenv # For environment variables
 
+from sentence_transformers import SentenceTransformer, util # For sentence embeddings
+import torch # For PyTorch tensors (embeddings)
 
 import firebase_admin
-from firebase_admin import credentials, auth, firestore # Import auth and firestore
+from firebase_admin import credentials, auth, firestore
 
 # --- Load Environment Variables ---
-load_dotenv()
+load_dotenv() # Load from .env file at the root of the 'backend' folder
 
 # --- Firebase Admin SDK Initialization ---
+db = None # Initialize db to None
 try:
-    # Use the downloaded service account key
-    cred = credentials.Certificate("firebase-service-account.json")
-    # Avoid re-initializing if already done (useful for some environments)
-    if not firebase_admin._apps:
+    # Ensure firebase-service-account.json is in the backend directory
+    # or provide the correct path.
+    SERVICE_ACCOUNT_PATH = "firebase-service-account.json"
+    if not os.path.exists(SERVICE_ACCOUNT_PATH):
+        raise FileNotFoundError(f"Service account key not found at {SERVICE_ACCOUNT_PATH}")
+
+    cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
+    if not firebase_admin._apps: # Check if already initialized
         firebase_admin.initialize_app(cred)
         print("Firebase Admin SDK initialized successfully.")
     else:
         print("Firebase Admin SDK already initialized.")
-except Exception as e:
-    print(f"Error initializing Firebase Admin SDK: {e}")
-
-# Get Firestore client
-try:
     db = firestore.client()
     print("Firestore client obtained successfully.")
 except Exception as e:
-    print(f"Error obtaining Firestore client: {e}")
-# --- End Firebase Admin SDK Initialization ---
-# --- Global variable to hold job data ---
-jobs_df = None
-# --- !!! IMPORTANT: SET CORRECT PATH TO YOUR DOWNLOADED CSV !!! ---
-JOBS_DATA_PATH = "data/job_skill_set.csv"
+    print(f"CRITICAL ERROR initializing Firebase Admin SDK or Firestore client: {e}")
+    # Depending on the error, you might want the app to not start or run in a degraded mode.
+    # For now, db will remain None if this fails.
 
+# --- Global Variables for ML Model and Data ---
+jobs_df: Optional[pd.DataFrame] = None
+JOBS_DATA_PATH = "data/job_skill_set.csv" # Adjust if your CSV is elsewhere or named differently
+
+#MODEL_NAME = 'all-MiniLM-L6-v2' # Faster model, good for development
+MODEL_NAME = 'all-mpnet-base-v2' # Larger, potentially more accurate, slower startup without cache
+
+sentence_model: Optional[SentenceTransformer] = None
+job_embeddings: Optional[torch.Tensor] = None
+
+# --- Define Cache Path based on Model ---
+model_slug = MODEL_NAME.replace('/', '_').replace('-', '_') # Create a file-safe slug from model name
+EMBEDDINGS_CACHE_DIR = "data/cache"
+EMBEDDINGS_CACHE_PATH = os.path.join(EMBEDDINGS_CACHE_DIR, f"job_embeddings_{model_slug}.pt")
+
+# --- Helper Function to Load and Clean DataFrame ---
+def load_and_clean_job_data(csv_path: str) -> Optional[pd.DataFrame]:
+    try:
+        print(f"Attempting to load job dataset from: {csv_path}...")
+        if not os.path.exists(csv_path):
+            print(f"ERROR: Job dataset file not found at {csv_path}.")
+            return None
+            
+        temp_df = pd.read_csv(csv_path)
+        print(f"Initial rows loaded from CSV: {len(temp_df)}")
+
+        # Data Cleaning / Preparation
+        temp_df['job_description'] = temp_df['job_description'].fillna('')
+        temp_df['job_title'] = temp_df['job_title'].fillna('N/A')
+
+        SKILLS_COLUMN_NAME = 'job_skill_set' # <-- ADJUST IF YOUR CSV SKILLS COLUMN IS DIFFERENT
+        if SKILLS_COLUMN_NAME not in temp_df.columns:
+            print(f"WARNING: Skills column '{SKILLS_COLUMN_NAME}' not found. Adding empty 'requiredSkills' list.")
+            temp_df['requiredSkills'] = pd.Series([[] for _ in range(len(temp_df))])
+        else:
+            print(f"Parsing skills from column: '{SKILLS_COLUMN_NAME}'...")
+            def parse_skill_list(skill_str):
+                if pd.isna(skill_str) or not isinstance(skill_str, str) or not skill_str.strip().startswith('['):
+                    # Handle cases that are not string representations of lists or are NaN
+                    # Also, if it's a comma-separated string NOT in list format, handle that here
+                    # e.g. if skill_str == "Python, Java": return [s.strip() for s in skill_str.split(',') if s.strip()]
+                    return []
+                try:
+                    skills = ast.literal_eval(skill_str) # For strings like '["Python", "Java"]'
+                    return [str(s).strip() for s in skills if str(s).strip()]
+                except (ValueError, SyntaxError, TypeError) as parse_error:
+                    # print(f"Warning: Could not parse skill string: '{skill_str}' | Error: {parse_error}")
+                    return []
+            temp_df['requiredSkills'] = temp_df[SKILLS_COLUMN_NAME].apply(parse_skill_list)
+
+        column_mappings = {
+            'job_id': 'id', 
+            'job_title': 'title',
+            'job_description': 'description',
+            # Example: If your CSV has 'Company Name' and 'Work Location'
+            # 'Company Name': 'company',
+            # 'Work Location': 'location',
+        }
+        actual_mappings = {k: v for k, v in column_mappings.items() if k in temp_df.columns}
+        temp_df.rename(columns=actual_mappings, inplace=True)
+
+        if 'id' not in temp_df.columns:
+            print("WARNING: 'id' column not found after mapping, generating new UUIDs.")
+            temp_df['id'] = [uuid4().hex for _ in range(len(temp_df))]
+        else:
+            temp_df['id'] = temp_df['id'].astype(str)
+
+        # Ensure Job model fields exist, add defaults
+        if 'company' not in temp_df.columns: temp_df['company'] = 'N/A'
+        if 'location' not in temp_df.columns: temp_df['location'] = None
+        if 'description' not in temp_df.columns: temp_df['description'] = ''
+        if 'requiredSkills' not in temp_df.columns: # Should be created by parsing logic
+            temp_df['requiredSkills'] = pd.Series([[] for _ in range(len(temp_df))])
+
+
+        required_model_fields = ['id', 'title', 'company', 'location', 'description', 'requiredSkills']
+        final_columns = [col for col in required_model_fields if col in temp_df.columns]
+        
+        cleaned_df = temp_df[final_columns].copy()
+        cleaned_df.dropna(subset=['id', 'title', 'description'], inplace=True)
+
+        if cleaned_df.empty:
+            print("WARNING: DataFrame is empty after cleaning/filtering.")
+            return None
+        
+        print(f"Successfully cleaned and prepared {len(cleaned_df)} job postings.")
+        return cleaned_df
+
+    except Exception as e:
+        print(f"ERROR: Failed to load or process job dataset from CSV: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 # --- Load ML Model on Startup ---
 try:
-    # Choose a pre-trained model. 'all-MiniLM-L6-v2' is fast and good quality.
-    # Other options: 'msmarco-distilbert-base-v4', 'all-mpnet-base-v2' (slower but potentially better)
-    MODEL_NAME = 'all-MiniLM-L6-v2'
     print(f"Loading Sentence Transformer model: {MODEL_NAME}...")
     sentence_model = SentenceTransformer(MODEL_NAME)
-    # You can check the embedding dimension:
-    # print(f"Model embedding dimension: {sentence_model.get_sentence_embedding_dimension()}")
-    print("Sentence Transformer model loaded successfully.")
+    print(f"Sentence Transformer model '{MODEL_NAME}' loaded successfully.")
 except Exception as e:
-    print(f"ERROR: Failed to load Sentence Transformer model: {e}")
-    # Decide if the app should fail or continue without ML matching
+    print(f"ERROR: Failed to load Sentence Transformer model '{MODEL_NAME}': {e}")
     sentence_model = None
 
-# --- Load Job Data on Startup ---
-job_embeddings = None # Variable to hold job embeddings
-try:
-    print(f"Loading job dataset from: {JOBS_DATA_PATH}...")
-    temp_df = pd.read_csv(JOBS_DATA_PATH)
-    print(f"Initial rows loaded: {len(temp_df)}")
+# --- Load Job DataFrame and Embeddings (with Caching) ---
+if sentence_model:
+    try:
+        os.makedirs(EMBEDDINGS_CACHE_DIR, exist_ok=True)
+    except OSError as e:
+        print(f"ERROR: Could not create cache directory '{EMBEDDINGS_CACHE_DIR}': {e}")
 
-    # --- Data Cleaning / Preparation ---
-    # 1. Handle missing descriptions
-    temp_df['job_description'].fillna('', inplace=True)
-    temp_df['job_title'].fillna('N/A', inplace=True) # Handle missing titles too
+    if os.path.exists(EMBEDDINGS_CACHE_PATH):
+        print(f"Attempting to load cached job embeddings from {EMBEDDINGS_CACHE_PATH}...")
+        try:
+            job_embeddings = torch.load(EMBEDDINGS_CACHE_PATH)
+            print(f"Successfully loaded job embeddings from cache. Shape: {job_embeddings.shape}")
+            jobs_df = load_and_clean_job_data(JOBS_DATA_PATH) # Load DF for metadata
+            
+            if jobs_df is None or len(jobs_df) != job_embeddings.shape[0]:
+                print(f"WARNING: Mismatch or error loading DataFrame with cache. DataFrame rows: {len(jobs_df) if jobs_df is not None else 'None'}, Cached embeddings: {job_embeddings.shape[0]}. Recomputing.")
+                job_embeddings = None # Force recompute
+                jobs_df = None # Reset jobs_df to reload fully for recomputation
+        except Exception as e:
+            print(f"ERROR loading embeddings from cache or verifying DataFrame: {e}. Recomputing.")
+            job_embeddings = None
+            jobs_df = None
+            
+    if job_embeddings is None: # If cache didn't exist, mismatch, or failed load
+        print(f"No valid cache found or issue with cached data. Recomputing job embeddings for {MODEL_NAME}...")
+        if jobs_df is None: # Ensure jobs_df is loaded if previous step failed
+            jobs_df = load_and_clean_job_data(JOBS_DATA_PATH)
 
-    # 2. Handle skills column - !!! VERY IMPORTANT: INSPECT YOUR CSV !!!
-    # Check the actual column name for skills (e.g., 'job_skill_set') and adjust below.
-    # Check how the skills are formatted (e.g., '["skill1","skill2"]' or 'skill1, skill2')
-    # Adjust the parsing logic accordingly. Using ast.literal_eval for '["skill1","skill2"]' format.
-    SKILLS_COLUMN_NAME = 'job_skill_set' # <-- ADJUST IF YOUR COLUMN NAME IS DIFFERENT
-
-    if SKILLS_COLUMN_NAME not in temp_df.columns:
-        print(f"WARNING: Skills column '{SKILLS_COLUMN_NAME}' not found. Adding empty skills list.")
-        temp_df['requiredSkills'] = pd.Series([[] for _ in range(len(temp_df))])
-    else:
-        print(f"Parsing skills from column: '{SKILLS_COLUMN_NAME}'...")
-        def parse_skill_list(skill_str):
-            if pd.isna(skill_str) or not isinstance(skill_str, str) or not skill_str.startswith('['):
-                return []
+        if jobs_df is not None and not jobs_df.empty:
+            print(f"Preparing to calculate embeddings for {len(jobs_df)} job descriptions...")
+            job_texts_for_embedding = jobs_df['description'].tolist()
             try:
-                # Safely evaluate the string literal as a Python list
-                skills = ast.literal_eval(skill_str)
-                # Ensure all items are strings and strip whitespace
-                return [str(s).strip() for s in skills if str(s).strip()]
-            except (ValueError, SyntaxError, TypeError) as parse_error:
-                # print(f"Warning: Could not parse skill string: {skill_str} | Error: {parse_error}") # Optional: Log parsing errors
-                return [] # Return empty list if parsing fails
+                job_embeddings = sentence_model.encode(job_texts_for_embedding, convert_to_tensor=True, show_progress_bar=True)
+                print(f"Job embeddings calculated. Shape: {job_embeddings.shape}. Saving to {EMBEDDINGS_CACHE_PATH}...")
+                torch.save(job_embeddings, EMBEDDINGS_CACHE_PATH)
+                print("Job embeddings saved to cache.")
+            except Exception as e:
+                print(f"ERROR calculating or saving embeddings: {e}")
+                job_embeddings = None
+        else:
+            print("Jobs DataFrame is empty or not loaded; cannot compute embeddings.")
+            job_embeddings = None
+else:
+    print("WARNING: Sentence Transformer model not loaded. Semantic matching will be unavailable.")
+    if jobs_df is None: # Attempt to load jobs_df for non-semantic features if model failed
+        jobs_df = load_and_clean_job_data(JOBS_DATA_PATH)
 
-        temp_df['requiredSkills'] = temp_df[SKILLS_COLUMN_NAME].apply(parse_skill_list)
-        print(f"Finished parsing skills. Example parsed skills: {temp_df['requiredSkills'].iloc[0] if not temp_df.empty else 'N/A'}")
+# --- Pydantic Models ---
+class SkillsUpdateRequest(BaseModel):
+    skills: List[str] = Field(..., example=["Python", "React", "SQL"])
 
+class EducationItem(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    degree: str = Field(..., example="Bachelor of Science")
+    school: str = Field(..., example="University of Example")
+    startYear: Optional[int] = Field(None, example=2018)
+    endYear: Optional[int] = Field(None, example=2022)
 
-    # 3. Rename columns to match Pydantic Job model
-    #    Add/remove mappings based on your CSV columns and Job model fields
-    column_mappings = {
-        'job_id': 'id',             # Adjust CSV column name if different
-        'job_title': 'title',
-        'job_description': 'description',
-        # Add mappings for company, location if they exist in CSV
-        # 'Company Name': 'company',
-        # 'Location': 'location',
-    }
-    # Only rename columns that actually exist in the DataFrame
-    actual_mappings = {k: v for k, v in column_mappings.items() if k in temp_df.columns}
-    temp_df.rename(columns=actual_mappings, inplace=True)
+class EducationUpdateRequest(BaseModel):
+    education: List[EducationItem]
 
-    # 4. Ensure required model columns exist, add defaults if necessary
-    if 'id' not in temp_df.columns:
-        print("WARNING: 'id' column not found after mapping, generating new IDs.")
-        temp_df['id'] = [uuid4().hex for _ in range(len(temp_df))]
-    else:
-         # Ensure existing IDs are strings
-         temp_df['id'] = temp_df['id'].astype(str)
+class ExperienceItem(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    title: str = Field(..., example="Software Engineer")
+    company: str = Field(..., example="Tech Solutions Inc.")
+    startDate: Optional[str] = Field(None, example="2020-01")
+    endDate: Optional[str] = Field(None, example="2022-12")
+    location: Optional[str] = Field(None, example="Remote")
+    description: Optional[str] = Field(None, example="Developed features for...")
 
-    if 'company' not in temp_df.columns: temp_df['company'] = 'N/A'
-    if 'location' not in temp_df.columns: temp_df['location'] = None
+class ExperienceUpdateRequest(BaseModel):
+    experience: List[ExperienceItem]
 
-    # 5. Select final columns needed for the Job model + matching
-    required_model_fields = ['id', 'title', 'company', 'location', 'description', 'requiredSkills']
-    # Keep only columns that actually exist after potential additions/renames
-    final_columns = [col for col in required_model_fields if col in temp_df.columns]
-    jobs_df = temp_df[final_columns].copy()
+class Job(BaseModel):
+    id: str
+    title: str
+    company: Optional[str] = None
+    location: Optional[str] = None
+    description: Optional[str] = ""
+    requiredSkills: List[str] = Field(default_factory=list)
 
-    # 6. Drop rows where essential info is missing AFTER selection
-    jobs_df.dropna(subset=['id', 'title'], inplace=True)
-    # Optional: Fill NaN in list columns explicitly if needed, though default_factory handles it too
-    # jobs_df['requiredSkills'] = jobs_df['requiredSkills'].apply(lambda x: x if isinstance(x, list) else [])
+class MatchedJob(Job):
+    matchScore: float = Field(..., example=0.75)
 
+class UserProfileResponse(BaseModel):
+    uid: str
+    email: Optional[str] = None
+    displayName: Optional[str] = None
+    photoURL: Optional[str] = None
+    createdAt: Optional[datetime] = None
+    skills: List[str] = Field(default_factory=list)
+    education: List[EducationItem] = Field(default_factory=list)
+    experience: List[ExperienceItem] = Field(default_factory=list)
 
-    print(f"Successfully loaded and prepared {len(jobs_df)} job postings into DataFrame.")
-    # print(jobs_df.info()) # Print DataFrame info (columns, types, memory)
-
-    if not temp_df.empty:
-        # Select final columns (ensure 'description' is included)
-        required_model_fields = ['id', 'title', 'company', 'location', 'description', 'requiredSkills']
-        final_columns = [col for col in required_model_fields if col in temp_df.columns]
-        jobs_df = temp_df[final_columns].copy()
-        jobs_df.dropna(subset=['id', 'title', 'description'], inplace=True) # Ensure description exists for embedding
-        jobs_df['id'] = jobs_df['id'].astype(str)
-        print(f"Successfully loaded and prepared {len(jobs_df)} job postings into DataFrame.")
-
-        # --- Pre-compute Job Embeddings (if model loaded successfully) ---
-        if sentence_model is not None and not jobs_df.empty:
-            print(f"Calculating embeddings for {len(jobs_df)} job descriptions...")
-            # Combine title and description for better context (optional)
-            # jobs_df['text_for_embedding'] = jobs_df['title'] + " " + jobs_df['description']
-            # Or just use description:
-            job_descriptions = jobs_df['description'].tolist()
-            # Calculate embeddings (this can take time/RAM depending on dataset size and model)
-            job_embeddings = sentence_model.encode(job_descriptions, convert_to_tensor=True, show_progress_bar=True)
-            print(f"Job embeddings calculated. Shape: {job_embeddings.shape}")
-            # Store embeddings (optional, can access directly from jobs_df index)
-            # You could add them as a column, but keeping separate might be cleaner
-            # jobs_df['embedding'] = job_embeddings.tolist() # Convert tensor rows to lists for DataFrame storage (can be inefficient)
-
-    else:
-        print("WARNING: DataFrame is empty after cleaning.")
-        jobs_df = None
-
-except FileNotFoundError:
-    print(f"ERROR: Job dataset file not found at {JOBS_DATA_PATH}. Job matching will use Firestore (if implemented) or fail.")
-    jobs_df = None # Ensure it's None if file not found
-except Exception as e:
-    print(f"ERROR: Failed to load or process job dataset from CSV: {e}")
-    # import traceback # Uncomment for detailed trace
-    # traceback.print_exc()
-    jobs_df = None
-
+# --- FastAPI app instance ---
 app = FastAPI()
 
-# Configure CORS 
-origins = [
-    "http://localhost:3000",
-]
+# --- CORS Middleware ---
+origins = ["http://localhost:3000"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -190,390 +253,200 @@ app.add_middleware(
 
 # --- Authentication Dependency ---
 async def get_current_user(authorization: Annotated[str | None, Header()] = None) -> dict:
-    """
-    Dependency function to verify Firebase ID token and get user data.
-    Expects 'Authorization: Bearer <token>' header.
-    """
     if authorization is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
-        )
-
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authorization header missing")
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format. Use 'Bearer <token>'",
-        )
-
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authorization header format. Use 'Bearer <token>'")
     id_token = parts[1]
     try:
-        # Verify the ID token while checking if the token is revoked.
         decoded_token = auth.verify_id_token(id_token, check_revoked=True)
-        # You can return the whole decoded token or just the UID
-        # print("Decoded token:", decoded_token) # For debugging
-        return decoded_token # Contains 'uid', 'email', etc.
-    except auth.ExpiredIdTokenError:
-         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except auth.RevokedIdTokenError:
-         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="ID token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except auth.InvalidIdTokenError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid ID token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return decoded_token
+    except auth.ExpiredIdTokenError: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="ID token has expired",headers={"WWW-Authenticate": "Bearer"})
+    except auth.RevokedIdTokenError: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="ID token has been revoked",headers={"WWW-Authenticate": "Bearer"})
+    except auth.InvalidIdTokenError: raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,detail="Invalid ID token",headers={"WWW-Authenticate": "Bearer"})
     except Exception as e:
         print(f"Token verification failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Could not verify token",
-        )
-# --- End Authentication Dependency ---
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Could not verify token")
 
-# --- Pydantic Models ---
-class SkillsUpdateRequest(BaseModel):
-    skills: List[str] = Field(..., example=["Python", "React", "SQL"])
-
-class EducationItem(BaseModel):
-    id: UUID = Field(default_factory=uuid4) # Automatically generate UUID if not provided
-    degree: str = Field(..., example="Bachelor of Science")
-    school: str = Field(..., example="University of Example")
-    startYear: Optional[int] = Field(None, example=2018)
-    endYear: Optional[int] = Field(None, example=2022)
-
-class EducationUpdateRequest(BaseModel):
-    # Expects a list of education items. The frontend will send the whole list.
-    education: List[EducationItem]
-
-class ExperienceItem(BaseModel):
-    id: UUID = Field(default_factory=uuid4)
-    title: str = Field(..., example="Software Engineer")
-    company: str = Field(..., example="Tech Solutions Inc.")
-    # Using strings for dates - easier for typical YYYY-MM form inputs
-    startDate: Optional[str] = Field(None, example="2020-01") # Or use date type: Optional[date] = None
-    endDate: Optional[str] = Field(None, example="2022-12") # Or use date type: Optional[date] = None; Null/empty means 'Present'
-    location: Optional[str] = Field(None, example="Remote")
-    description: Optional[str] = Field(None, example="Developed features for...")
-
-# NEW: Model for the request body when updating the whole experience list
-class ExperienceUpdateRequest(BaseModel):
-    experience: List[ExperienceItem]
-
-class Job(BaseModel):
-    id: str # Document ID from Firestore
-    title: str
-    company: Optional[str] = None
-    location: Optional[str] = None
-    description: Optional[str] = None
-    requiredSkills: List[str] = Field(default_factory=list)
-    # Add other fields like url, datePosted later if needed
-
-# NEW: Model representing a Job returned after matching, includes a score
-class MatchedJob(Job): # Inherits fields from Job
-    matchScore: float = Field(..., example=0.75) # Add the match score (e.g., 0.0 to 1.0)
-
-
-class UserProfileResponse(BaseModel):
-    uid: str
-    email: Optional[str] = None
-    displayName: Optional[str] = None
-    photoURL: Optional[str] = None
-    createdAt: Optional[datetime] = None # here
-    skills: List[str] = Field(default_factory=list) # default_factory for empty lists
-    education: List[EducationItem] = Field(default_factory=list)
-    experience: List[EducationItem] = Field(default_factory=list)
-
-
-# --- Helper Functions ---
+# --- Keyword Match Score Helper ---
 def calculate_match_score(user_skills: List[str], job_skills: List[str]) -> float:
-    """
-    Calculates a simple match score based on skill overlap.
-    Score = (Number of matching skills) / (Total number of required job skills)
-    Returns a float between 0.0 and 1.0.
-    """
-    # --- !!! MOVED THIS CHECK TO THE TOP !!! ---
-    if not job_skills:
-        print("[DEBUG] calculate_match_score: Job has no required skills. Score: 0.0")
-        return 0.0 # No skills required, or handle as 1.0 if preferred
-
-    # Use sets for efficient intersection finding, case-insensitive comparison
-    user_skills_set = set(skill.lower() for skill in user_skills)
-    job_skills_set = set(skill.lower() for skill in job_skills)
-
-    matching_skills = user_skills_set.intersection(job_skills_set)
-    # No need to check len(job_skills_set) again due to the check above
-    score = len(matching_skills) / len(job_skills_set)
-
-    # --- ADD DEBUG LOGGING ---
-    print(f"--- Score Calculation ---")
-    print(f"User Skills Set: {user_skills_set}")
-    print(f"Job Skills Set: {job_skills_set}")
-    print(f"Matching Skills: {matching_skills}")
-    print(f"Score: {score:.2f}") # Format score
-    print(f"-----------------------")
-    # --- END DEBUG LOGGING ---
-
+    if not job_skills: return 0.0
+    user_skills_set = set(s.lower() for s in user_skills)
+    job_skills_set = set(s.lower() for s in job_skills)
+    matching_skills_count = len(user_skills_set.intersection(job_skills_set))
+    score = matching_skills_count / len(job_skills_set)
+    # print(f"[Keyword Score] User: {user_skills_set}, Job: {job_skills_set}, Match: {matching_skills_count}, Score: {score:.2f}")
     return score
+
 # --- API Endpoints ---
 @app.get("/")
 async def read_root():
     return {"message": "Resume Analyzer Backend is running!"}
 
-# --- Profile Endpoints (Skills) ---
 @app.get("/api/profile", response_model=UserProfileResponse)
-async def get_user_profile(
-    current_user: Annotated[dict, Depends(get_current_user)]
-):
-    """
-    Fetches the complete profile for the authenticated user from Firestore.
-    """
-    if db is None:
-         raise HTTPException(status_code=503, detail="Firestore service unavailable")
-
+async def get_user_profile(current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
-    if not user_uid:
-         raise HTTPException(status_code=400, detail="User ID not found in token")
-
     try:
         user_doc_ref = db.collection("users").document(user_uid)
         user_doc = user_doc_ref.get()
-
         if user_doc.exists:
             profile_data = user_doc.to_dict()
-            profile_data["uid"] = current_user.get("uid")
+            profile_data["uid"] = user_uid # Ensure UID is part of the response data
             return UserProfileResponse(**profile_data)
         else:
-             #return 404
-             print(f"Profile document not found for UID: {user_uid}")
-             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
-
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     except Exception as e:
-        print(f"Error fetching profile for {current_user.get('uid')}: {e}")
+        print(f"Error fetching profile for {user_uid}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not fetch profile")
 
-
 @app.put("/api/profile/skills", response_model=SkillsUpdateRequest)
-async def update_user_skills(
-    skills_update: SkillsUpdateRequest,
-    current_user: Annotated[dict, Depends(get_current_user)]
-):
-    """
-    Updates the skills list for the authenticated user in Firestore.
-    Replaces the existing skills list with the provided one.
-    """
-    if db is None:
-         raise HTTPException(status_code=503, detail="Firestore service unavailable")
-
+async def update_user_skills(skills_update: SkillsUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
-    if not user_uid:
-         raise HTTPException(status_code=400, detail="User ID not found in token")
-
     try:
-        user_doc_ref = db.collection("users").document(user_uid)
-        # Use update() which can also create fields if the doc exists but the field doesn't
-        # Using set(..., merge=True) would also work to only update specific fields
-        user_doc_ref.update({"skills": skills_update.skills})
+        db.collection("users").document(user_uid).update({"skills": skills_update.skills})
         print(f"Updated skills for UID: {user_uid}")
-        return skills_update # Return the updated skills list
+        return skills_update
     except Exception as e:
         print(f"Error updating skills for {user_uid}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update skills")
-    
-# --- Profile Endpoints (Education) ---
+
 @app.put("/api/profile/education", response_model=EducationUpdateRequest)
-async def update_user_education(
-    education_update: EducationUpdateRequest, # Use the new request model
-    current_user: Annotated[dict, Depends(get_current_user)]
-):
-    """
-    Updates the education list for the authenticated user in Firestore.
-    Replaces the existing education list with the provided one.
-    """
-    if db is None:
-         raise HTTPException(status_code=503, detail="Firestore service unavailable")
-
+async def update_user_education(education_update: EducationUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
-    if not user_uid:
-         raise HTTPException(status_code=400, detail="User ID not found in token")
-
     try:
-        user_doc_ref = db.collection("users").document(user_uid)
-
-        # Convert Pydantic models to dicts AND ensure ID is a string for Firestore
-        education_list_for_firestore = []
-        for item in education_update.education:
-            item_dict = item.model_dump()
-            # Explicitly convert UUID object to string hex representation
-            item_dict['id'] = str(item.id) # <--- CHANGE IS HERE
-            education_list_for_firestore.append(item_dict)
-
-        # Update the 'education' field in Firestore with the list of dicts (ID as string)
-        user_doc_ref.update({"education": education_list_for_firestore})
-
+        education_list_fs = [item.model_dump(by_alias=True) for item in education_update.education] # Use model_dump
+        for item_dict in education_list_fs: # Ensure ID is string
+            item_dict['id'] = str(item_dict['id'])
+        db.collection("users").document(user_uid).update({"education": education_list_fs})
         print(f"Updated education for UID: {user_uid}")
-        # Return the original Pydantic model - FastAPI handles converting UUID back for JSON if needed
         return education_update
-
     except Exception as e:
-        # **CRITICAL:** Look at the terminal output for the *exact* error 'e' here!
         print(f"Error updating education for {user_uid}: {e}")
-        # You might want to log the traceback too:
-        # import traceback
-        # traceback.print_exc()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update education")
 
-# --- Profile Endpoints (Experience) ---
 @app.put("/api/profile/experience", response_model=ExperienceUpdateRequest)
-async def update_user_experience(
-    experience_update: ExperienceUpdateRequest, # Use the new request model
-    current_user: Annotated[dict, Depends(get_current_user)]
-):
-    """
-    Updates the experience list for the authenticated user in Firestore.
-    Replaces the existing experience list with the provided one.
-    """
-    if db is None:
-         raise HTTPException(status_code=503, detail="Firestore service unavailable")
-
+async def update_user_experience(experience_update: ExperienceUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
-    if not user_uid:
-         raise HTTPException(status_code=400, detail="User ID not found in token")
-
     try:
-        user_doc_ref = db.collection("users").document(user_uid)
-
-        # Convert Pydantic models back to dicts, ensuring ID is string for Firestore
-        experience_list_for_firestore = []
-        for item in experience_update.experience:
-            item_dict = item.model_dump()
-            # Explicitly convert UUID object to string hex representation
-            item_dict['id'] = str(item.id)
-            # Ensure dates are strings or null (if using string type in model)
-            # If using date type in model, Firestore handles date objects directly.
-            # item_dict['startDate'] = item.startDate.isoformat() if item.startDate else None # Example if using date type
-            # item_dict['endDate'] = item.endDate.isoformat() if item.endDate else None # Example if using date type
-            experience_list_for_firestore.append(item_dict)
-
-        # Update the 'experience' field in Firestore
-        user_doc_ref.update({"experience": experience_list_for_firestore})
-
+        experience_list_fs = [item.model_dump(by_alias=True) for item in experience_update.experience] # Use model_dump
+        for item_dict in experience_list_fs: # Ensure ID is string
+            item_dict['id'] = str(item_dict['id'])
+        db.collection("users").document(user_uid).update({"experience": experience_list_fs})
         print(f"Updated experience for UID: {user_uid}")
-        # Return the data that was sent
         return experience_update
-
     except Exception as e:
         print(f"Error updating experience for {user_uid}: {e}")
-        # import traceback
-        # traceback.print_exc() # Uncomment for detailed traceback during debugging
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update experience")
 
-# --- Job Matching Endpoint ---
+# --- Job Matching Endpoint (Semantic) ---
 @app.get("/api/jobs/match", response_model=List[MatchedJob])
 async def get_job_matches(
     current_user: Annotated[dict, Depends(get_current_user)],
-    min_score_threshold: float = 0.3 # Adjust threshold for semantic scores (often higher)
+    min_score_threshold: float = 0.3, # Threshold for semantic scores
+    # Add weights here if/when hybrid scoring is implemented
+    # semantic_weight: float = 0.7,
+    # keyword_weight: float = 0.3
 ):
     user_uid = current_user.get("uid")
     print(f"\n=== Starting SEMANTIC Job Match for User: {user_uid} ===")
 
-    # --- Pre-computation Checks ---
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable (db)")
     if jobs_df is None or jobs_df.empty:
-        print("[ERROR] Job dataset (DataFrame) not loaded. Cannot match.")
+        print("[ERROR] Job dataset (DataFrame) not loaded or empty. Cannot perform matching.")
         return []
     if sentence_model is None:
         print("[ERROR] Sentence Transformer model not loaded. Cannot perform semantic match.")
         raise HTTPException(status_code=503, detail="Matching service model unavailable")
     if job_embeddings is None or len(job_embeddings) != len(jobs_df):
          print("[ERROR] Job embeddings not pre-computed or mismatch length. Cannot perform semantic match.")
-         # Optionally: Compute on-the-fly here if not pre-computed, but will be slow
          raise HTTPException(status_code=503, detail="Job embedding data unavailable")
 
-
-    # 1. Fetch User Profile Skills
     try:
         user_doc_ref = db.collection("users").document(user_uid)
         user_doc = user_doc_ref.get()
         if not user_doc.exists: raise HTTPException(404, "User profile not found")
         user_profile_data = user_doc.to_dict()
-        user_skills = user_profile_data.get("skills", [])
-        print(f"[DEBUG] User Skills Fetched: {user_skills}")
-        if not user_skills:
-             print("[INFO] User has no skills. Cannot perform semantic match based on skills.")
+        user_skills_list = user_profile_data.get("skills", [])
+        # Consider adding user experience text here for richer embedding
+        user_experience_list = user_profile_data.get("experience", [])
+        
+        user_profile_text_parts = []
+        if user_skills_list:
+            user_profile_text_parts.append("Skills: " + ", ".join(user_skills_list) + ".")
+        if user_experience_list:
+            exp_texts = []
+            for exp in user_experience_list:
+                 exp_text = f"Worked as {exp.get('title', '')} at {exp.get('company', '')}."
+                 if exp.get('description'): exp_text += f" Responsibilities: {exp.get('description')}."
+                 exp_texts.append(exp_text)
+            if exp_texts: user_profile_text_parts.append("Experience: " + " ".join(exp_texts))
+        
+        user_text_for_embedding = " ".join(user_profile_text_parts).strip()
+
+        if not user_text_for_embedding:
+             print("[INFO] User profile text for embedding is empty (no skills/experience). Returning no matches.")
              return []
-        # Combine skills into a single string for embedding
-        user_skills_text = ", ".join(user_skills)
-        print(f"[DEBUG] User skills text for embedding: '{user_skills_text}'")
+        print(f"[DEBUG] User text for embedding: '{user_text_for_embedding}'")
 
     except Exception as e:
-        print(f"ERROR fetching user profile {user_uid}: {e}")
-        raise HTTPException(500, "Could not fetch user profile")
+        print(f"ERROR fetching user profile data for embedding for {user_uid}: {e}")
+        raise HTTPException(500, "Could not process user profile for matching")
 
-    # 2. Calculate Similarity & Filter
-    matched_jobs_indices = [] # Store tuples of (index, score)
+    matched_jobs_output = []
     try:
-        print("[DEBUG] Calculating user skill embedding...")
-        user_embedding = sentence_model.encode(user_skills_text, convert_to_tensor=True)
+        print("[DEBUG] Calculating user profile embedding...")
+        user_embedding = sentence_model.encode(user_text_for_embedding, convert_to_tensor=True)
+        
+        # If user_embedding is 1D, unsqueeze for cos_sim with batch of job_embeddings
+        if len(user_embedding.shape) == 1:
+            user_embedding = user_embedding.unsqueeze(0)
+
         print("[DEBUG] Calculating cosine similarities...")
+        # job_embeddings should be a 2D tensor [num_jobs, embedding_dim]
+        cosine_scores_tensor = util.cos_sim(user_embedding, job_embeddings)[0] # Get the first row of scores
+        cosine_scores_np = cosine_scores_tensor.cpu().numpy()
 
-        # Compute cosine similarity between user embedding and all pre-computed job embeddings
-        # util.cos_sim returns a tensor of shape [1, num_jobs]
-        cosine_scores = util.cos_sim(user_embedding, job_embeddings)[0] # Get the first row
-
-        # Convert to numpy array for easier handling
-        cosine_scores_np = cosine_scores.cpu().numpy()
-
-        print(f"[DEBUG] Calculated {len(cosine_scores_np)} scores.")
-        # Find indices where score meets threshold
-        for idx, score in enumerate(cosine_scores_np):
-            score = float(score) # Convert from numpy float
-            # print(f"[DEBUG] Job index {idx} Score: {score:.4f}") # Verbose logging
-            if score >= min_score_threshold:
-                matched_jobs_indices.append((idx, score))
-                # print(f"[DEBUG] Job index {idx} PASSED threshold.")
+        print(f"[DEBUG] Calculated {len(cosine_scores_np)} semantic scores.")
+        
+        for idx, semantic_score_float in enumerate(cosine_scores_np):
+            final_score = float(semantic_score_float) # Start with semantic score
+            
+            # --- Placeholder for Hybrid Score Calculation ---
+            # job_required_skills = jobs_df.iloc[idx].get('requiredSkills', [])
+            # keyword_s = calculate_match_score(user_skills_list, job_required_skills)
+            # final_score = (semantic_weight * semantic_score_float) + (keyword_weight * keyword_s)
+            # print(f"[DEBUG] Job ID {jobs_df.iloc[idx].get('id', 'N/A')}: SemScore={semantic_score_float:.2f}, KeyScore={keyword_s:.2f}, FinalScore={final_score:.2f}")
+            # --- End Placeholder ---
+            
+            if final_score >= min_score_threshold:
+                try:
+                    job_row = jobs_df.iloc[idx]
+                    job_data_dict = job_row.to_dict()
+                    
+                    job_instance_data = {
+                        "id": str(job_data_dict.get('id', '')),
+                        "title": job_data_dict.get('title', 'N/A'),
+                        "company": job_data_dict.get('company', None),
+                        "location": job_data_dict.get('location', None),
+                        "description": job_data_dict.get('description', ""),
+                        "requiredSkills": job_data_dict.get('requiredSkills', []) if isinstance(job_data_dict.get('requiredSkills'), list) else [],
+                        "matchScore": final_score
+                    }
+                    matched_jobs_output.append(MatchedJob(**job_instance_data))
+                except Exception as val_err:
+                    print(f"[ERROR] Skipping job index {idx} due to Pydantic validation: {val_err}")
 
     except Exception as e:
-        print(f"ERROR during semantic similarity calculation: {e}")
+        print(f"ERROR during semantic similarity or job processing: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail="Error calculating job matches")
 
-
-    # 3. Format & Rank Results
-    matched_jobs = []
-    print(f"[DEBUG] Formatting {len(matched_jobs_indices)} potential matches...")
-    for idx, score in matched_jobs_indices:
-        try:
-            job_row = jobs_df.iloc[idx] # Get job data using index
-            job_data = job_row.to_dict()
-            job_instance_data = {
-                "id": str(job_data.get('id', '')),
-                "title": job_data.get('title', 'N/A'),
-                "company": job_data.get('company', None),
-                "location": job_data.get('location', None),
-                "description": job_data.get('description', ""),
-                 # Ensure requiredSkills is a list from the DataFrame row
-                "requiredSkills": job_data.get('requiredSkills', []) if isinstance(job_data.get('requiredSkills'), list) else [],
-                "matchScore": score # Use the calculated cosine similarity score
-            }
-            matched_jobs.append(MatchedJob(**job_instance_data))
-        except Exception as validation_error:
-             print(f"[ERROR] Skipping job index {idx} (ID: {job_data.get('id', 'UNKNOWN') if 'job_data' in locals() else 'UNKNOWN'}) due to Pydantic validation error: {validation_error}")
-
-
-    # Rank results (higher score first)
-    matched_jobs.sort(key=lambda job: job.matchScore, reverse=True)
-
-    print(f"=== SEMANTIC Job Match Finished. Found {len(matched_jobs)} matches. ===")
-    return matched_jobs
-    
-
-
-
+    matched_jobs_output.sort(key=lambda job: job.matchScore, reverse=True)
+    print(f"=== SEMANTIC Job Match Finished. Found {len(matched_jobs_output)} matches. ===")
+    return matched_jobs_output
