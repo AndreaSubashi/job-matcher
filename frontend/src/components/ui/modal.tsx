@@ -26,7 +26,11 @@ export default function Modal({ isOpen, onClose, title, children }: ModalProps) 
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-black bg-opacity-40" />
+          {/* --- MODIFIED THIS DIV --- */}
+          {/* Added backdrop-blur-sm and a very light semi-transparent background for better effect */}
+          <div className="fixed inset-0 backdrop-blur-lg" />
+          {/* You can adjust backdrop-blur-sm to backdrop-blur-md or backdrop-blur-lg for more blur */}
+          {/* The bg-gray-500 bg-opacity-25 is optional but can help the blur look more distinct */}
         </Transition.Child>
 
         {/* Modal Container */}
@@ -41,7 +45,7 @@ export default function Modal({ isOpen, onClose, title, children }: ModalProps) 
               leaveFrom="opacity-100 scale-100"
               leaveTo="opacity-0 scale-95"
             >
-              {/* Modal Panel */}
+              {/* Modal Panel (ensure this has its own background and shadow) */}
               <Dialog.Panel className="w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
                 {/* Optional Title */}
                 {title && (
