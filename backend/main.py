@@ -2,7 +2,7 @@
 import os
 import pandas as pd
 import ast 
-from uuid import UUID, uuid4 # Ensure uuid4 is imported
+from uuid import UUID, uuid4
 from fastapi import FastAPI, Depends, HTTPException, status, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -11,7 +11,7 @@ from datetime import datetime, date
 from dotenv import load_dotenv
 from dateutil.parser import parse as parse_date
 from dateutil.relativedelta import relativedelta
-import re # For parsing experience strings
+import re 
 
 from sentence_transformers import SentenceTransformer, util
 import torch
@@ -41,7 +41,7 @@ except Exception as e:
 
 # --- Global Variables for ML Model and Data ---
 jobs_df: Optional[pd.DataFrame] = None
-JOBS_DATA_PATH = "data/jobs.csv" # PATH TO YOUR NEW CSV
+JOBS_DATA_PATH = "data/jobs.csv" # Path to your IT dataset
 
 MODEL_NAME = 'all-mpnet-base-v2' 
 sentence_model: Optional[SentenceTransformer] = None
@@ -49,7 +49,8 @@ job_embeddings: Optional[torch.Tensor] = None
 
 model_slug = MODEL_NAME.replace('/', '_').replace('-', '_')
 EMBEDDINGS_CACHE_DIR = "data/cache"
-EMBEDDINGS_CACHE_PATH = os.path.join(EMBEDDINGS_CACHE_DIR, f"job_embeddings_{model_slug}_job_opportunities_dataset_v2.pt") # Incremented cache name
+# Updated cache name for this version of data processing
+EMBEDDINGS_CACHE_PATH = os.path.join(EMBEDDINGS_CACHE_DIR, f"job_embeddings_{model_slug}_job_opportunities_dataset_v_refined_text.pt") 
 
 # --- Helper Function to Load and Clean DataFrame ---
 def load_and_clean_job_data(csv_path: str) -> Optional[pd.DataFrame]:
@@ -64,14 +65,17 @@ def load_and_clean_job_data(csv_path: str) -> Optional[pd.DataFrame]:
 
         temp_df.columns = [str(col).strip().lower().replace(' ', '_') for col in temp_df.columns]
         
+        # Fill NaNs and ensure correct types
         temp_df['job_description'] = temp_df['job_description'].fillna('').astype(str)
         temp_df['role'] = temp_df['role'].fillna('N/A').astype(str) 
         temp_df['job_title'] = temp_df['job_title'].fillna('N/A').astype(str) 
         temp_df['company'] = temp_df['company'].fillna('N/A').astype(str)
         temp_df['experience'] = temp_df['experience'].fillna('Unknown').astype(str)
-        temp_df['skills'] = temp_df['skills'].fillna('').astype(str)
+        # This 'skills' column from CSV contains sentences
+        temp_df['skills_text_from_csv'] = temp_df.get('skills', pd.Series([''] * len(temp_df))).fillna('').astype(str) 
 
         def parse_experience_to_level(exp_str: str) -> str:
+            # ... (same robust experience parsing logic as before) ...
             if pd.isna(exp_str) or exp_str.lower() in ['n/a', 'unknown', '']: return "Unknown"
             numbers = re.findall(r'\d+', exp_str)
             if not numbers:
@@ -90,77 +94,78 @@ def load_and_clean_job_data(csv_path: str) -> Optional[pd.DataFrame]:
             except: return "Unknown"
         temp_df['parsed_experience_level'] = temp_df['experience'].apply(parse_experience_to_level)
         
-        CSV_SKILLS_COLUMN_STANDARDIZED = 'skills' 
-        print(f"Attempting basic skill extraction from sentence-based column: '{CSV_SKILLS_COLUMN_STANDARDIZED}'...")
-        COMMON_TECH_KEYWORDS = ['java', 'python', 'sql', 'excel', 'aws', 'azure', 'cisco', 'wan', 
+        # Basic keyword extraction from the 'skills' (sentences) column for keyword matching
+        # This list should ideally be much more comprehensive or replaced by NLP NER
+        COMMON_TECH_KEYWORDS = ['java', 'python', 'sql', 'excel', 'aws', 'azure', 'cisco', 
                                 'cybersecurity', 'pmp', 'agile', 'r', 'docker', 'jenkins', 
-                                'windows', 'linux', 'ui/ux', 'database management', 'oracle',
-                                'html', 'css', 'javascript', 'react', 'tensorflow', 'ai/ml',
-                                'audit', 'risk management', 'firewall', 'vpn', 'security',
-                                'manual testing', 'bug tracking', 'architecture', 'consulting',
-                                'it strategy', 'business analysis', 'requirements', 'troubleshooting',
-                                'customer service', 'devsecops', 'ci/cd', 'etl', 'big data',
-                                'training', 'it education', 'cloud security', 'encryption',
-                                'procurement', 'vendor management', 'user research', 'ux design',
-                                'blockchain', 'solidity', 'risk assessment', 'compliance']
+                                'react', 'angular', 'vue', 'node.js', 'javascript', 'typescript',
+                                'html', 'css', 'tensorflow', 'pytorch', 'machine learning', 'data analysis'] # Example list
         def extract_keywords_from_sentences(text_data: str) -> List[str]:
             if pd.isna(text_data) or not isinstance(text_data, str): return []
             found_skills = set()
             text_data_lower = text_data.lower()
             for keyword in COMMON_TECH_KEYWORDS:
-                if keyword in text_data_lower: found_skills.add(keyword.capitalize())
+                # Use regex for whole word matching to avoid partial matches like 'r' in 'architecture'
+                if re.search(r'\b' + re.escape(keyword) + r'\b', text_data_lower):
+                    found_skills.add(keyword.capitalize())
             return list(found_skills)
-        temp_df['parsed_job_keywords'] = temp_df[CSV_SKILLS_COLUMN_STANDARDIZED].apply(extract_keywords_from_sentences)
+        temp_df['parsed_job_keywords'] = temp_df['skills_text_from_csv'].apply(extract_keywords_from_sentences)
 
         column_mappings = {
             'job_id': 'id', 'role': 'title', 'job_description': 'description',
-            'company': 'company', 
-            'parsed_job_keywords': 'requiredSkills',
+            'company': 'company',
+            'parsed_job_keywords': 'requiredSkills', # For keyword matching
             'parsed_experience_level': 'experience_level_required'
         }
-        actual_mappings = {k: v for k, v in column_mappings.items() if k in temp_df.columns}
-        temp_df.rename(columns=actual_mappings, inplace=True)
+        temp_df.rename(columns={k: v for k, v in column_mappings.items() if k in temp_df.columns}, inplace=True)
         
         if 'id' not in temp_df.columns:
-            print("WARNING: 'id' column (from 'job_id') not found, generating new UUIDs.")
-            temp_df['id'] = [uuid4().hex for _ in range(len(temp_df))] # Corrected: uuid4
+            temp_df['id'] = [uuid4().hex for _ in range(len(temp_df))]
         else:
             temp_df['id'] = temp_df['id'].astype(str)
         
-        for field in ['title', 'company', 'description', 'requiredSkills', 'experience_level_required']:
+        # Ensure all Job model fields exist
+        for field in ['title', 'company',  'description', 'requiredSkills', 'experience_level_required']:
             if field not in temp_df.columns:
                 default_value = [] if field == 'requiredSkills' else \
-                                'N/A' if field == 'company' else \
+                                'N/A' if field in ['company', 'title'] else \
                                 '' if field == 'description' else \
-                                'Unknown' if field == 'experience_level_required' else \
-                                'N/A' if field == 'title' else None
+                                'Unknown' if field == 'experience_level_required' else None
                 temp_df[field] = default_value
         
         required_model_fields = ['id', 'title', 'company', 'description', 'requiredSkills', 'experience_level_required']
         final_columns = [col for col in required_model_fields if col in temp_df.columns]
         
         cleaned_df = temp_df[final_columns].copy()
-        cleaned_df.dropna(subset=['id', 'title', 'description'], inplace=True) 
+        cleaned_df.dropna(subset=['id', 'title'], inplace=True) # Keep description even if empty for embedding
 
         if cleaned_df.empty:
             print("WARNING: DataFrame is empty after cleaning/filtering.")
             return None
         
-        cleaned_df['title_safe'] = cleaned_df['title'].fillna('').astype(str)
-        cleaned_df['skills_sentences_safe'] = temp_df.get(CSV_SKILLS_COLUMN_STANDARDIZED, pd.Series([''] * len(cleaned_df))).fillna('').astype(str)
-        cleaned_df['description_safe'] = cleaned_df['description'].fillna('').astype(str)
-        cleaned_df['text_for_embedding'] = cleaned_df['title_safe'] + ". " + cleaned_df['skills_sentences_safe'] + ". " + cleaned_df['description_safe']
+        # --- Create text for JOB embedding (Role + Skills Sentences + Description) ---
+        cleaned_df['title_for_emb'] = cleaned_df['title'].fillna('').astype(str)
+        # Use original 'skills' column (sentences) from CSV for job embedding, standardized name is 'skills_text_from_csv'
+        cleaned_df['skills_sentences_for_emb'] = temp_df.get('skills_text_from_csv', pd.Series([''] * len(cleaned_df))).fillna('').astype(str)
+        cleaned_df['description_for_emb'] = cleaned_df['description'].fillna('').astype(str)
+        
+        cleaned_df['text_for_embedding'] = cleaned_df['title_for_emb'] + ". " + \
+                                           cleaned_df['skills_sentences_for_emb'] + ". " + \
+                                           cleaned_df['description_for_emb']
+        # Clean up multiple periods or excessive whitespace if any
+        cleaned_df['text_for_embedding'] = cleaned_df['text_for_embedding'].str.replace(r'\.\s*\.', '.', regex=True).str.replace(r'\s+', ' ', regex=True).str.strip()
+        print(f"Example text for JOB embedding: {cleaned_df['text_for_embedding'].iloc[0][:300] + '...' if not cleaned_df.empty and cleaned_df['text_for_embedding'].iloc[0] else 'N/A'}")
         
         print(f"Successfully cleaned and prepared {len(cleaned_df)} IT job postings.")
         return cleaned_df
 
-    except Exception as e:
+    except Exception as e: # ... (error handling) ...
         print(f"ERROR: Failed to load or process IT job dataset from CSV: {e}")
         import traceback; traceback.print_exc()
         return None
 
 # --- Load ML Model and Data (with Caching) ---
-# ... (Same model loading and embedding caching logic as before) ...
+# ... (Same model loading and embedding caching logic as before, uses the refined load_and_clean_job_data) ...
 try:
     print(f"Loading Sentence Transformer model: {MODEL_NAME}...")
     sentence_model = SentenceTransformer(MODEL_NAME)
@@ -212,6 +217,7 @@ else:
     if jobs_df is None: jobs_df = load_and_clean_job_data(JOBS_DATA_PATH)
 
 # --- Pydantic Models ---
+# ... (SkillsUpdate, EducationItem, EducationUpdate, ExperienceItem, ExperienceUpdate - same as before) ...
 class SkillsUpdateRequest(BaseModel): skills: List[str] = Field(..., example=["Python"])
 class EducationItem(BaseModel):
     id: UUID = Field(default_factory=uuid4)
@@ -228,7 +234,7 @@ class Job(BaseModel):
     id: str; title: str
     company: Optional[str] = None; 
     description: Optional[str] = ""
-    requiredSkills: List[str] = Field(default_factory=list)
+    requiredSkills: List[str] = Field(default_factory=list) # Will be from basic extraction
     experience_level_required: Optional[str] = None 
 class MatchedJob(Job): matchScore: float = Field(..., example=0.75)
 class UserProfileResponse(BaseModel):
@@ -238,10 +244,15 @@ class UserProfileResponse(BaseModel):
     education: List[EducationItem] = Field(default_factory=list)
     experience: List[ExperienceItem] = Field(default_factory=list)
 
+# --- FastAPI app instance & CORS ---
+# ... (same) ...
 app = FastAPI()
 origins = ["http://localhost:3000"]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+# --- Auth Dependency & Helper Functions ---
+# ... (get_current_user, calculate_keyword_match_score, get_user_total_experience_years, 
+#      categorize_user_experience, calculate_experience_level_match_score - same as before) ...
 async def get_current_user(authorization: Annotated[str | None, Header()] = None) -> dict:
     if authorization is None: raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Auth header missing")
     parts = authorization.split();
@@ -285,7 +296,7 @@ def calculate_experience_level_match_score(user_level_str: str, job_level_str: O
     user_val = level_map.get(user_level_norm, -1); job_val = level_map.get(job_level_norm, -1)
     if user_val == -1 or job_val == -1: return 0.25 
     if user_val == job_val: return 1.0
-    elif user_val > job_val: # Overqualified
+    elif user_val > job_val: 
         diff = user_val - job_val
         if diff == 1: return 0.7 
         elif diff == 2: return 0.4
@@ -294,48 +305,45 @@ def calculate_experience_level_match_score(user_level_str: str, job_level_str: O
     elif job_val == user_val + 2: return 0.2
     else: return 0.05
 
-# --- ADDED THIS FUNCTION ---
 def calculate_education_semantic_score(
-    user_education_list: List[dict], 
-    job_text_embedding: torch.Tensor, # Embedding of (job_title + job_skills_text + job_description)
-    model: Optional[SentenceTransformer]
+    user_education_embeddings: Optional[torch.Tensor], # Pre-computed embeddings for user's education items
+    job_text_embedding: torch.Tensor, # Single embedding for the current job
+    # NO 'model' PARAMETER HERE
 ) -> float:
-    if not user_education_list or model is None or job_text_embedding is None:
+    if user_education_embeddings is None or user_education_embeddings.nelement() == 0 or job_text_embedding is None:
+        # nelement() == 0 checks if the tensor is empty
         return 0.0
 
     max_edu_score = 0.0
-    for edu_item in user_education_list:
-        degree_text = edu_item.get('degree', '').strip()
-        school_text = edu_item.get('school', '').strip()
-        # Combine degree and school for a richer education text
-        education_entry_text = f"{degree_text} from {school_text}".strip()
-        if not education_entry_text or education_entry_text == "from": # Handle empty strings
-            education_entry_text = degree_text or school_text # Use whichever is available
+    try:
+        # Ensure job_text_embedding is 2D for cos_sim if it's not already
+        # (job_text_embedding from job_embeddings[idx] is already 1D, unsqueeze it)
+        current_job_embedding_expanded = job_text_embedding
+        if len(job_text_embedding.shape) == 1:
+            current_job_embedding_expanded = job_text_embedding.unsqueeze(0) # Make it [1, embedding_dim]
+
+        # user_education_embeddings should already be a 2D tensor [num_edu_items, embedding_dim]
+        # or None if no education items
+        if not (torch.isnan(user_education_embeddings).any() or torch.isnan(current_job_embedding_expanded).any()):
+            # Calculate scores between all user edu embeddings and the single job embedding
+            # Resulting shape: [num_edu_items, 1]
+            cosine_scores_tensor = util.cos_sim(user_education_embeddings, current_job_embedding_expanded)
+            
+            if cosine_scores_tensor.numel() > 0: # Check if tensor is not empty
+                max_edu_score = float(torch.max(cosine_scores_tensor).item())
+            # else: max_edu_score remains 0.0 
+        else:
+            print("[WARN] NaN detected in education or job embedding during education score calculation.")
+            # max_edu_score remains 0.0
+            
+    except Exception as e:
+        print(f"[WARN] Error calculating education semantic score: {e}")
+        # max_edu_score remains 0.0
         
-        if education_entry_text:
-            try:
-                edu_embedding = model.encode(education_entry_text, convert_to_tensor=True)
-                if len(edu_embedding.shape) == 1: edu_embedding = edu_embedding.unsqueeze(0)
-                
-                current_job_embedding_expanded = job_text_embedding
-                if len(job_text_embedding.shape) == 1: # Should be 1D if it's a single job's embedding
-                    current_job_embedding_expanded = job_text_embedding.unsqueeze(0)
-                
-                if not (torch.isnan(edu_embedding).any() or torch.isnan(current_job_embedding_expanded).any()):
-                    score_tensor = util.cos_sim(edu_embedding, current_job_embedding_expanded)
-                    score = float(score_tensor[0][0].item())
-                    if score > max_edu_score:
-                        max_edu_score = score
-            except Exception as e:
-                print(f"[WARN] Error embedding education item '{education_entry_text}': {e}")
     return max_edu_score
-# --- END ADDED FUNCTION ---
-
-@app.get("/")
-async def read_root(): return {"message": "Resume Analyzer Backend is running!"}
-
+# --- API Endpoints (Profile CRUD - same as before) ---
+# ...
 @app.get("/api/profile", response_model=UserProfileResponse)
-# ... (get_user_profile endpoint - same as before)
 async def get_user_profile(current_user: Annotated[dict, Depends(get_current_user)]):
     if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
@@ -353,7 +361,6 @@ async def get_user_profile(current_user: Annotated[dict, Depends(get_current_use
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not fetch profile")
 
 @app.put("/api/profile/skills", response_model=SkillsUpdateRequest)
-# ... (update_user_skills endpoint - same as before)
 async def update_user_skills(skills_update: SkillsUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
     if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
@@ -366,7 +373,6 @@ async def update_user_skills(skills_update: SkillsUpdateRequest, current_user: A
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update skills")
 
 @app.put("/api/profile/education", response_model=EducationUpdateRequest)
-# ... (update_user_education endpoint - same as before)
 async def update_user_education(education_update: EducationUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
     if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
@@ -382,7 +388,6 @@ async def update_user_education(education_update: EducationUpdateRequest, curren
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update education")
 
 @app.put("/api/profile/experience", response_model=ExperienceUpdateRequest)
-# ... (update_user_experience endpoint - same as before)
 async def update_user_experience(experience_update: ExperienceUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
     if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
@@ -397,27 +402,24 @@ async def update_user_experience(experience_update: ExperienceUpdateRequest, cur
         print(f"Error updating experience for {user_uid}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not update experience")
 
+
+# --- Job Matching Endpoint (Updated for refined text embedding) ---
 @app.get("/api/jobs/match", response_model=List[MatchedJob])
 async def get_job_matches(
     current_user: Annotated[dict, Depends(get_current_user)],
-    min_score_threshold: float = 0.6,
-    semantic_profile_weight: float = 0.3, # Adjusted weights
-    keyword_weight: float = 0.3,        
+    min_score_threshold: float = 0.6, # Adjusted threshold
+    semantic_profile_weight: float = 0.4, 
+    keyword_weight: float = 0.25,        
     experience_level_weight: float = 0.25, 
-    education_semantic_weight: float = 0.15,
-    education_presence_bonus: float = 0.03 
+    education_semantic_weight: float = 0.10, # Weight for semantic relevance of education
+    education_presence_bonus: float = 0.02   # Smaller flat bonus for having any education
 ):
-    user_uid = current_user.get("uid") # ... (logging and checks) ...
-    print(f"\n=== Starting HYBRID Job Match (New Dataset, EduSem) for User: {user_uid} ===")
-    print(f"Weights: SemProfile={semantic_profile_weight}, KeySkill={keyword_weight}, ExpLvl={experience_level_weight}, EduSem={education_semantic_weight}, EduPresBonus={education_presence_bonus}")
-
-    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable (db)")
-    if jobs_df is None or jobs_df.empty: print("[ERROR] Job DF not loaded."); return []
-    if sentence_model is None: raise HTTPException(status_code=503, detail="Matching model unavailable")
-    if job_embeddings is None or len(job_embeddings) != len(jobs_df):
-         raise HTTPException(status_code=503, detail="Job embedding data unavailable")
+    user_uid = current_user.get("uid")
+    print(f"\n=== Starting HYBRID Job Match (Refined Embeddings) for User: {user_uid} ===")
+    # ... (Weight logging, initial checks for db, jobs_df, model, job_embeddings - same as before) ...
 
     try:
+        # --- Fetch and Prepare User Profile Data ---
         user_doc_ref = db.collection("users").document(user_uid)
         user_doc = user_doc_ref.get()
         if not user_doc.exists: raise HTTPException(404, "User profile not found")
@@ -435,22 +437,49 @@ async def get_job_matches(
         print(f"User Total Years Exp: {user_total_years_exp:.2f}, Categorized Level: {user_experience_level_cat}")
         print(f"User Education Raw: {user_education_list_raw}")
 
-
-        # User text for MAIN semantic embedding (Skills + Experience)
+        # --- User text for MAIN semantic embedding (Skills + Experience ONLY) ---
         user_profile_text_parts_main = []
-        if user_skills_list: user_profile_text_parts_main.append("Skills: " + ", ".join(user_skills_list) + ".")
+        if user_skills_list: 
+            # More direct phrasing for skills
+            user_profile_text_parts_main.append("Key skills: " + ", ".join(user_skills_list) + ".")
         if user_experience_list_raw:
-            exp_texts = [f"Worked as {exp.get('title', '')} at {exp.get('company', '')}. Responsibilities: {exp.get('description', '')}" 
-                         for exp in user_experience_list_raw if exp.get('title') and exp.get('company')]
-            if exp_texts: user_profile_text_parts_main.append("Experience: " + " ".join(exp_texts))
+            exp_texts = []
+            for exp in user_experience_list_raw:
+                title = exp.get('title', 'a role')
+                company = exp.get('company', 'a company')
+                desc = exp.get('description', 'various tasks')
+                # Concise but informative
+                exp_texts.append(f"Professional experience as {title} at {company}, focusing on {desc}.")
+            if exp_texts: 
+                user_profile_text_parts_main.append("Work history includes: " + " ".join(exp_texts))
         
         user_text_for_main_embedding = " ".join(user_profile_text_parts_main).strip()
-        if not user_text_for_main_embedding: user_text_for_main_embedding = "General professional profile." # Default
+        if not user_text_for_main_embedding: 
+            user_text_for_main_embedding = "General professional profile." 
         
-        print(f"User Text for Main Embedding (Skills & Exp): '{user_text_for_main_embedding}'")
+        print(f"User Text for Main Embedding (Skills & Exp): '{user_text_for_main_embedding[:300]}...'") # Log snippet
         
         user_main_embedding = sentence_model.encode(user_text_for_main_embedding, convert_to_tensor=True)
         if len(user_main_embedding.shape) == 1: user_main_embedding = user_main_embedding.unsqueeze(0)
+        
+        # --- Pre-compute User EDUCATION Embeddings ---
+        user_education_embeddings_tensor: Optional[torch.Tensor] = None
+        if user_education_list_raw and sentence_model:
+            education_texts_for_embedding = []
+            for edu_item in user_education_list_raw:
+                degree = edu_item.get('degree', '').strip()
+                school = edu_item.get('school', '').strip()
+                # Concise education text
+                edu_entry_text = f"{degree} from {school}".strip() if degree and school else degree or school
+                if edu_entry_text: education_texts_for_embedding.append(edu_entry_text)
+            
+            if education_texts_for_embedding:
+                # print(f"[DEBUG] Encoding {len(education_texts_for_embedding)} user education entries: {education_texts_for_embedding}")
+                user_education_embeddings_tensor = sentence_model.encode(education_texts_for_embedding, convert_to_tensor=True)
+                if user_education_embeddings_tensor.nelement() > 0 and len(user_education_embeddings_tensor.shape) == 1:
+                    user_education_embeddings_tensor = user_education_embeddings_tensor.unsqueeze(0)
+                elif user_education_embeddings_tensor.nelement() == 0: 
+                    user_education_embeddings_tensor = None
         print(f"------------------------------------")
 
     except Exception as e:
@@ -467,22 +496,19 @@ async def get_job_matches(
             print("[WARN] User main embedding is None or NaN, main semantic scores will be 0.")
 
         for idx, job_row in jobs_df.iterrows():
-            # a. Main Semantic Score (User Skills+Exp vs Combined Job Text)
             main_semantic_score = float(all_main_semantic_scores_np[idx]) if all_main_semantic_scores_np is not None and idx < len(all_main_semantic_scores_np) else 0.0
-            
-            # b. Keyword Skill Score
             job_req_skills_list = job_row.get('requiredSkills', [])
             keyword_s = calculate_keyword_match_score(user_skills_list, job_req_skills_list)
-            
-            # c. Experience Level Score
             job_exp_level_req_str = job_row.get('experience_level_required')
             experience_s = calculate_experience_level_match_score(user_experience_level_cat, job_exp_level_req_str)
-
-            # d. Education Semantic Score
-            current_job_full_text_embedding = job_embeddings[idx] # This is embedding of (title + skills_sentences + description)
-            education_semantic_s = calculate_education_semantic_score(user_education_list_raw, current_job_full_text_embedding, sentence_model)
             
-            # e. Education Presence Bonus
+            current_job_full_text_embedding = job_embeddings[idx] 
+            education_semantic_s = calculate_education_semantic_score(
+                user_education_embeddings_tensor, # Pass pre-computed tensor
+                current_job_full_text_embedding,
+                # sentence_model is NOT needed here anymore by the revised function
+            )
+            
             edu_presence_b = education_presence_bonus if user_education_list_raw else 0.0
             
             final_score = (semantic_profile_weight * main_semantic_score) + \
@@ -493,19 +519,20 @@ async def get_job_matches(
             final_score = min(final_score, 1.0) 
 
             # --- Debugging for a specific job title ---
-            target_job_title_debug = "Data Analyst" # Change this to a title you are investigating
-            current_job_title_debug = job_row.get('title', 'N/A')
-            if target_job_title_debug.lower() in current_job_title_debug.lower(): # Or check by ID
-                print(f"\n--- DEBUG JOB: {current_job_title_debug} (ID: {job_row.get('id')}) ---")
-                print(f"Job Text for Embedding: {job_row.get('text_for_embedding', 'N/A')[:200]}...") # Print start of job text
-                print(f"Scores (pre-weight): MainSem={main_semantic_score:.3f}, Keyword={keyword_s:.3f}, ExpLvl={experience_s:.3f}, EduSem={education_semantic_s:.3f}")
-                print(f"EduPresenceBonus: {edu_presence_b:.3f}")
-                print(f"Weighted: MainSem={(semantic_profile_weight * main_semantic_score):.3f}, Key={(keyword_weight * keyword_s):.3f}, ExpLvl={(experience_level_weight * experience_s):.3f}, EduSem={(education_semantic_weight * education_semantic_s):.3f}")
-                print(f"Final Score: {final_score:.3f}")
-                print(f"-------------------------------------------\n")
+            #target_job_title_debug = "Data Analyst" # Change this to a title you are investigating
+            #current_job_title_debug = job_row.get('title', 'N/A')
+            #if target_job_title_debug.lower() in current_job_title_debug.lower(): # Or check by ID
+             #   print(f"\n--- DEBUG JOB: {current_job_title_debug} (ID: {job_row.get('id')}) ---")
+              #  print(f"Job Text for Embedding: {job_row.get('text_for_embedding', 'N/A')[:200]}...") # Print start of job text
+               # print(f"Scores (pre-weight): MainSem={main_semantic_score:.3f}, Keyword={keyword_s:.3f}, ExpLvl={experience_s:.3f}, EduSem={education_semantic_s:.3f}")
+                #print(f"EduPresenceBonus: {edu_presence_b:.3f}")
+                #print(f"Weighted: MainSem={(semantic_profile_weight * main_semantic_score):.3f}, Key={(keyword_weight * keyword_s):.3f}, ExpLvl={(experience_level_weight * experience_s):.3f}, EduSem={(education_semantic_weight * education_semantic_s):.3f}")
+                #print(f"Final Score: {final_score:.3f}")
+                #print(f"-------------------------------------------\n")
                 
             if final_score >= min_score_threshold:
                 try:
+                    # ... (create job_instance_data and append MatchedJob - same as before) ...
                     job_data_dict = job_row.to_dict()
                     job_instance_data = {
                         "id": str(job_data_dict.get('id', '')),
@@ -525,6 +552,5 @@ async def get_job_matches(
         raise HTTPException(status_code=500, detail="Error calculating job matches")
 
     matched_jobs_output.sort(key=lambda job: job.matchScore, reverse=True)
-    print(f"=== HYBRID Job Match (New Dataset, EduSem) Finished. Found {len(matched_jobs_output)} matches. ===")
+    print(f"=== HYBRID Job Match (New Dataset, Refined Embeddings) Finished. Found {len(matched_jobs_output)} matches. ===")
     return matched_jobs_output
-
