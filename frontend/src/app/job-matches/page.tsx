@@ -18,35 +18,49 @@ interface MatchedJob {
 }
 
 export default function JobMatchesPage() {
-    const { user, loading: authLoading } = useAuth();
+    const { user, loading: authLoading } = useAuth(); // user object is available
     const router = useRouter();
 
     const [matchedJobs, setMatchedJobs] = useState<MatchedJob[]>([]);
     const [loadingMatches, setLoadingMatches] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [isProfileEmpty, setIsProfileEmpty] = useState(false); // New state
 
-    // --- Route Protection ---
-    useEffect(() => {
-        if (!authLoading && !user) {
-            router.push('/login');
-        }
-    }, [user, authLoading, router]);
+    // ... Route Protection useEffect ...
 
-    // --- Fetch Job Matches ---
-    const fetchMatches = useCallback(async () => {
-        if (!user) return; // Only fetch if user is logged in
+    const fetchMatchesAndProfileStatus = useCallback(async () => {
+        if (!user) return;
 
-        console.log("Fetching job matches for user:", user.uid);
         setLoadingMatches(true);
         setError(null);
+        setIsProfileEmpty(false); // Reset
+
         try {
             const token = await user.getIdToken();
-            // Adjust threshold via query param if needed, e.g.?min_score_threshold=0.5
+
+            // Check profile status first (optional, but good for specific message)
+            // Alternatively, infer from user_skills_list, etc. if already fetched elsewhere
+            const profileResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/profile`, {
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+            if (profileResponse.ok) {
+                const profileData = await profileResponse.json();
+                if (
+                    (!profileData.skills || profileData.skills.length === 0) &&
+                    (!profileData.education || profileData.education.length === 0) &&
+                    (!profileData.experience || profileData.experience.length === 0)
+                ) {
+                    setIsProfileEmpty(true);
+                    setMatchedJobs([]); // Ensure no old matches are shown
+                    setLoadingMatches(false); // Stop loading for matches
+                    return; // Don't proceed to fetch matches if profile is empty
+                }
+            } // else, handle profile fetch error if necessary, or let match fetch proceed
+
+            // Fetch matches
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/jobs/match`, {
                 method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                },
+                headers: { 'Authorization': `Bearer ${token}` },
             });
 
             if (!response.ok) {
@@ -73,9 +87,9 @@ export default function JobMatchesPage() {
     // Fetch matches when user is available
     useEffect(() => {
         if (user) {
-            fetchMatches();
+            fetchMatchesAndProfileStatus();
         }
-    }, [user, fetchMatches]);
+    }, [user, fetchMatchesAndProfileStatus]);
 
 
     // --- Render Logic ---
@@ -104,7 +118,7 @@ export default function JobMatchesPage() {
                  <div className="my-4 text-center text-red-600 p-4 bg-red-100 rounded shadow">
                      <p><strong>Error fetching job matches:</strong></p>
                      <p>{error}</p>
-                     <button onClick={fetchMatches} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Retry</button>
+                     <button onClick={fetchMatchesAndProfileStatus} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Retry</button>
                 </div>
             )}
 
