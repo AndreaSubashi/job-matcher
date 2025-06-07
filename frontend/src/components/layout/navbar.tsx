@@ -2,7 +2,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation'; // Import usePathname hook
+import { usePathname } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import { Menu, Transition } from '@headlessui/react';
@@ -24,9 +24,8 @@ const ChevronDownIcon = () => (
 
 export default function Navbar() {
   const { user, loading } = useAuth();
-  const pathname = usePathname(); // Get current pathname to determine active link
+  const pathname = usePathname();
 
-  // Define styles for active and inactive links
   const activeLinkClass = "text-indigo-600 font-semibold";
   const inactiveLinkClass = "text-gray-500 hover:text-indigo-600";
 
@@ -34,67 +33,47 @@ export default function Navbar() {
     <nav className="bg-white shadow-sm sticky top-0 z-50">
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          {/* Logo/Brand */}
           <div className="flex-shrink-0">
             <Link href="/" className="text-2xl font-bold text-indigo-600 hover:text-indigo-800">
               JobMatcher AI
             </Link>
           </div>
 
-          {/* Navigation Links & Profile Menu */}
           <div className="flex items-center">
             {loading ? (
               <div className="h-8 w-8 bg-gray-200 rounded-full animate-pulse"></div>
             ) : user ? (
               <>
                 <div className="hidden sm:flex items-center space-x-8">
-                  <Link
-                    href="/dashboard"
-                    className={`${
-                      pathname === '/dashboard' ? activeLinkClass : inactiveLinkClass
-                    } text-sm font-medium transition-colors`}
-                  >
+                  <Link href="/dashboard" className={`${pathname === '/dashboard' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     Dashboard
                   </Link>
-                  <Link
-                    href="/profile"
-                    className={`${
-                      pathname === '/profile' ? activeLinkClass : inactiveLinkClass
-                    } text-sm font-medium transition-colors`}
-                  >
+                  <Link href="/profile" className={`${pathname === '/profile' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     Profile
                   </Link>
-                  <Link
-                    href="/job-matches"
-                    className={`${
-                      pathname === '/job-matches' ? activeLinkClass : inactiveLinkClass
-                    } text-sm font-medium transition-colors`}
-                  >
+                  <Link href="/job-matches" className={`${pathname === '/job-matches' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     Job Matches
+                  </Link>
+                  {/* --- NEW LINK --- */}
+                  <Link href="/saved-jobs" className={`${pathname === '/saved-jobs' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
+                    Saved Jobs
+                  </Link>
+                  {/* --- NEW LINK --- */}
+                  <Link href="/how-it-works" className={`${pathname === '/how-it-works' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
+                    How It Works
                   </Link>
                 </div>
                 
-                {/* --- Profile dropdown --- */}
                 <Menu as="div" className="relative ml-5">
                   <div>
                     <Menu.Button className="group flex items-center rounded-full bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
                       <span className="sr-only">Open user menu</span>
                       {user.photoURL ? (
-                        <img
-                          className="h-8 w-8 rounded-full"
-                          src={user.photoURL}
-                          alt="User profile picture"
-                          referrerPolicy="no-referrer"
-                        />
+                        <img className="h-8 w-8 rounded-full" src={user.photoURL} alt="User profile picture" referrerPolicy="no-referrer" />
                       ) : (
-                        <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center">
-                            <UserCircleIcon/>
-                        </div>
+                        <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center"><UserCircleIcon/></div>
                       )}
-                      {/* Chevron Icon */}
-                      <div className="ml-1.5">
-                        <ChevronDownIcon />
-                      </div>
+                      <div className="ml-1.5"><ChevronDownIcon /></div>
                     </Menu.Button>
                   </div>
                   <Transition
@@ -106,39 +85,31 @@ export default function Navbar() {
                     leaveFrom="transform opacity-100 scale-100"
                     leaveTo="transform opacity-0 scale-95"
                   >
-                    <Menu.Items className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white shadow-lg border border-gray-200 focus:outline-none divide-y divide-gray-100">
-                      {/* Display user info at the top */}
+                    <Menu.Items className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white py-1 shadow-lg border border-gray-200 focus:outline-none divide-y divide-gray-100">
                       <div className="px-4 py-3">
                         <p className="text-sm text-gray-900">Signed in as</p>
-                        <p className="truncate text-sm font-medium text-gray-800">
-                          {user.displayName || user.email}
-                        </p>
+                        <p className="truncate text-sm font-medium text-gray-800">{user.displayName || user.email}</p>
                       </div>
 
                       <div className="py-1">
-                        {/* --- Links for mobile view --- */}
                         <div className="sm:hidden">
                             <Menu.Item>
-                              {({ active }) => (
-                                <Link href="/dashboard" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Dashboard</Link>
-                              )}
+                              {({ active }) => (<Link href="/dashboard" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Dashboard</Link>)}
                             </Menu.Item>
                             <Menu.Item>
-                              {({ active }) => (
-                                <Link href="/profile" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Your Profile</Link>
-                              )}
+                              {({ active }) => (<Link href="/profile" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Your Profile</Link>)}
                             </Menu.Item>
                             <Menu.Item>
-                              {({ active }) => (
-                                <Link href="/job-matches" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Job Matches</Link>
-                              )}
+                              {({ active }) => (<Link href="/job-matches" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Job Matches</Link>)}
+                            </Menu.Item>
+                             {/* --- NEW LINK (for mobile dropdown) --- */}
+                            <Menu.Item>
+                              {({ active }) => (<Link href="/saved-jobs" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Saved Jobs</Link>)}
                             </Menu.Item>
                         </div>
                         {/* Always visible 'Your Profile' link in dropdown */}
                         <Menu.Item>
-                          {({ active }) => (
-                            <Link href="/profile" className={`${active ? 'bg-gray-100' : ''} hidden sm:block px-4 py-2 text-sm text-gray-700`}>Your Profile</Link>
-                          )}
+                          {({ active }) => (<Link href="/profile" className={`${active ? 'bg-gray-100' : ''} hidden sm:block px-4 py-2 text-sm text-gray-700`}>Your Profile</Link>)}
                         </Menu.Item>
                       </div>
 
@@ -147,10 +118,7 @@ export default function Navbar() {
                           {({ active }) => {
                             const { logout } = useAuth();
                             const router = useRouter();
-                            const handleLogout = async () => {
-                              await logout();
-                              router.push('/');
-                            };
+                            const handleLogout = async () => { await logout(); router.push('/'); };
                             return (
                               <button
                                 onClick={handleLogout}
@@ -166,9 +134,7 @@ export default function Navbar() {
                   </Transition>
                 </Menu>
               </>
-            ) : (
-              null
-            )}
+            ) : ( null )}
           </div>
         </div>
       </div>

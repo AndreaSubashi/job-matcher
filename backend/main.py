@@ -229,30 +229,37 @@ class ExperienceItem(BaseModel):
     title: str; company: str
     startDate: Optional[str] = None; endDate: Optional[str] = None 
 class ExperienceUpdateRequest(BaseModel): experience: List[ExperienceItem]
+class ScoreComponents(BaseModel):
+    semantic_profile_score: float
+    keyword_skill_score: float
+    experience_level_score: float
+    education_semantic_score: float
 
 class Job(BaseModel):
     id: str; title: str
-    company: Optional[str] = None; 
+    company: Optional[str] = None
     description: Optional[str] = ""
-    requiredSkills: List[str] = Field(default_factory=list) # Will be from basic extraction
+    requiredSkills: List[str] = Field(default_factory=list)
     experience_level_required: Optional[str] = None 
-class MatchedJob(Job): matchScore: float = Field(..., example=0.75)
+class MatchedJob(Job): # Modified
+    matchScore: float = Field(..., example=0.75)
+    score_components: ScoreComponents
+    matching_keywords: List[str] = Field(default_factory=list)
 class UserProfileResponse(BaseModel):
     uid: str; email: Optional[str] = None; displayName: Optional[str] = None
     photoURL: Optional[str] = None; createdAt: Optional[datetime] = None
     skills: List[str] = Field(default_factory=list)
     education: List[EducationItem] = Field(default_factory=list)
     experience: List[ExperienceItem] = Field(default_factory=list)
+    saved_job_ids: List[str] = Field(default_factory=list) # Added for Saved Jobs feature
 
 # --- FastAPI app instance & CORS ---
 # ... (same) ...
 app = FastAPI()
+# ... (All helper functions and endpoints from your code, with modifications below) ...
 origins = ["http://localhost:3000"]
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
-# --- Auth Dependency & Helper Functions ---
-# ... (get_current_user, calculate_keyword_match_score, get_user_total_experience_years, 
-#      categorize_user_experience, calculate_experience_level_match_score - same as before) ...
 async def get_current_user(authorization: Annotated[str | None, Header()] = None) -> dict:
     if authorization is None: raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Auth header missing")
     parts = authorization.split();
@@ -284,9 +291,9 @@ def get_user_total_experience_years(experience_list: List[dict]) -> float:
     return total_years
 
 def categorize_user_experience(total_years: float) -> str:
-    if total_years < 1: return "Entry-Level"
-    elif total_years < 3: return "Junior"
-    elif total_years < 7: return "Mid-Level"
+    if total_years < 1: return "Entry-Level"; 
+    elif total_years < 3: return "Junior";
+    elif total_years < 7: return "Mid-Level"; 
     else: return "Senior"
 
 def calculate_experience_level_match_score(user_level_str: str, job_level_str: Optional[str]) -> float:
@@ -296,53 +303,29 @@ def calculate_experience_level_match_score(user_level_str: str, job_level_str: O
     user_val = level_map.get(user_level_norm, -1); job_val = level_map.get(job_level_norm, -1)
     if user_val == -1 or job_val == -1: return 0.25 
     if user_val == job_val: return 1.0
-    elif user_val > job_val: 
+    elif user_val > job_val:
         diff = user_val - job_val
-        if diff == 1: return 0.7 
-        elif diff == 2: return 0.4
+        if diff == 1: return 0.7; 
+        elif diff == 2: return 0.4; 
         else: return 0.2
     elif job_val == user_val + 1: return 0.6 
     elif job_val == user_val + 2: return 0.2
     else: return 0.05
 
-def calculate_education_semantic_score(
-    user_education_embeddings: Optional[torch.Tensor], # Pre-computed embeddings for user's education items
-    job_text_embedding: torch.Tensor, # Single embedding for the current job
-    # NO 'model' PARAMETER HERE
-) -> float:
-    if user_education_embeddings is None or user_education_embeddings.nelement() == 0 or job_text_embedding is None:
-        # nelement() == 0 checks if the tensor is empty
-        return 0.0
-
+def calculate_education_semantic_score(user_education_embeddings: Optional[torch.Tensor], job_text_embedding: torch.Tensor) -> float:
+    if user_education_embeddings is None or user_education_embeddings.nelement() == 0 or job_text_embedding is None: return 0.0
     max_edu_score = 0.0
     try:
-        # Ensure job_text_embedding is 2D for cos_sim if it's not already
-        # (job_text_embedding from job_embeddings[idx] is already 1D, unsqueeze it)
         current_job_embedding_expanded = job_text_embedding
-        if len(job_text_embedding.shape) == 1:
-            current_job_embedding_expanded = job_text_embedding.unsqueeze(0) # Make it [1, embedding_dim]
-
-        # user_education_embeddings should already be a 2D tensor [num_edu_items, embedding_dim]
-        # or None if no education items
+        if len(job_text_embedding.shape) == 1: current_job_embedding_expanded = job_text_embedding.unsqueeze(0)
         if not (torch.isnan(user_education_embeddings).any() or torch.isnan(current_job_embedding_expanded).any()):
-            # Calculate scores between all user edu embeddings and the single job embedding
-            # Resulting shape: [num_edu_items, 1]
             cosine_scores_tensor = util.cos_sim(user_education_embeddings, current_job_embedding_expanded)
-            
-            if cosine_scores_tensor.numel() > 0: # Check if tensor is not empty
-                max_edu_score = float(torch.max(cosine_scores_tensor).item())
-            # else: max_edu_score remains 0.0 
-        else:
-            print("[WARN] NaN detected in education or job embedding during education score calculation.")
-            # max_edu_score remains 0.0
-            
-    except Exception as e:
-        print(f"[WARN] Error calculating education semantic score: {e}")
-        # max_edu_score remains 0.0
-        
-    return max_edu_score
-# --- API Endpoints (Profile CRUD - same as before) ---
+            if cosine_scores_tensor.numel() > 0: max_edu_score = float(torch.max(cosine_scores_tensor).item())
+    except Exception as e: print(f"[WARN] Error calculating education semantic score: {e}")
+    return max(0.0, max_edu_score)
 # ...
+# --- Profile Endpoints ---
+# ... (GET /, GET /api/profile (with modification), PUT skills, edu, exp - same as your code) ...
 @app.get("/api/profile", response_model=UserProfileResponse)
 async def get_user_profile(current_user: Annotated[dict, Depends(get_current_user)]):
     if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
@@ -353,12 +336,67 @@ async def get_user_profile(current_user: Annotated[dict, Depends(get_current_use
         if user_doc.exists:
             profile_data = user_doc.to_dict()
             profile_data["uid"] = user_uid 
+            # --- MODIFICATION: Ensure saved_job_ids field exists ---
+            profile_data.setdefault("saved_job_ids", [])
             return UserProfileResponse(**profile_data)
         else:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
     except Exception as e:
         print(f"Error fetching profile for {user_uid}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not fetch profile")
+
+# --- NEW ENDPOINTS FOR SAVED JOBS ---
+@app.post("/api/profile/saved-jobs/{job_id}", status_code=status.HTTP_200_OK)
+async def save_job(job_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
+    user_uid = current_user.get("uid")
+    user_doc_ref = db.collection("users").document(user_uid)
+    try:
+        # array_union appends the job_id only if it's not already present
+        user_doc_ref.update({"saved_job_ids": firestore.ArrayUnion([job_id])})
+        return {"status": "success", "message": f"Job {job_id} saved."}
+    except Exception as e:
+        print(f"Error saving job {job_id} for user {user_uid}: {e}")
+        raise HTTPException(status_code=500, detail="Could not save job.")
+
+@app.delete("/api/profile/saved-jobs/{job_id}", status_code=status.HTTP_200_OK)
+async def unsave_job(job_id: str, current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
+    user_uid = current_user.get("uid")
+    user_doc_ref = db.collection("users").document(user_uid)
+    try:
+        # array_remove deletes all instances of the job_id from the array
+        user_doc_ref.update({"saved_job_ids": firestore.ArrayRemove([job_id])})
+        return {"status": "success", "message": f"Job {job_id} unsaved."}
+    except Exception as e:
+        print(f"Error unsaving job {job_id} for user {user_uid}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not unsave job.")
+
+@app.get("/api/profile/saved-jobs", response_model=List[Job])
+async def get_saved_jobs(current_user: Annotated[dict, Depends(get_current_user)]):
+    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
+    if jobs_df is None: raise HTTPException(status_code=503, detail="Job data is not available")
+    user_uid = current_user.get("uid")
+    try:
+        user_doc = db.collection("users").document(user_uid).get()
+        if not user_doc.exists:
+            raise HTTPException(status_code=404, detail="User profile not found")
+        
+        user_data = user_doc.to_dict()
+        saved_ids = user_data.get("saved_job_ids", [])
+        if not saved_ids:
+            return [] 
+
+        saved_jobs_df = jobs_df[jobs_df['id'].isin(saved_ids)]
+        saved_jobs_list = saved_jobs_df.to_dict(orient='records')
+        
+        saved_jobs_dict = {job['id']: job for job in saved_jobs_list}
+        ordered_saved_jobs = [saved_jobs_dict[job_id] for job_id in saved_ids if job_id in saved_jobs_dict]
+
+        return ordered_saved_jobs
+    except Exception as e:
+        print(f"Error fetching saved jobs for user {user_uid}: {e}")
+        raise HTTPException(status_code=500, detail="Could not retrieve saved jobs.")
 
 @app.put("/api/profile/skills", response_model=SkillsUpdateRequest)
 async def update_user_skills(skills_update: SkillsUpdateRequest, current_user: Annotated[dict, Depends(get_current_user)]):
@@ -407,150 +445,95 @@ async def update_user_experience(experience_update: ExperienceUpdateRequest, cur
 @app.get("/api/jobs/match", response_model=List[MatchedJob])
 async def get_job_matches(
     current_user: Annotated[dict, Depends(get_current_user)],
-    min_score_threshold: float = 0.6, # Adjusted threshold
-    semantic_profile_weight: float = 0.4, 
-    keyword_weight: float = 0.25,        
+    min_score_threshold: float = 0.6, # Example tuned threshold
+    semantic_profile_weight: float = 0.3,
+    keyword_weight: float = 0.3,        
     experience_level_weight: float = 0.25, 
-    education_semantic_weight: float = 0.10, # Weight for semantic relevance of education
-    education_presence_bonus: float = 0.02   # Smaller flat bonus for having any education
+    education_semantic_weight: float = 0.1, 
+    education_presence_bonus: float = 0.02
 ):
     user_uid = current_user.get("uid")
-    print(f"\n=== Starting HYBRID Job Match (Refined Embeddings) for User: {user_uid} ===")
-    # ... (Weight logging, initial checks for db, jobs_df, model, job_embeddings - same as before) ...
+    print(f"\n=== Starting HYBRID Job Match (Detailed Insights) for User: {user_uid} ===")
+    
+    if db is None or jobs_df is None or sentence_model is None or job_embeddings is None:
+        raise HTTPException(status_code=503, detail="A required service or data is not available.")
 
+    # 1. Fetch & Prepare User Profile
     try:
-        # --- Fetch and Prepare User Profile Data ---
-        user_doc_ref = db.collection("users").document(user_uid)
-        user_doc = user_doc_ref.get()
+        user_doc = db.collection("users").document(user_uid).get()
         if not user_doc.exists: raise HTTPException(404, "User profile not found")
         user_profile_data = user_doc.to_dict()
-        
         user_skills_list = user_profile_data.get("skills", [])
         user_experience_list_raw = user_profile_data.get("experience", [])
         user_education_list_raw = user_profile_data.get("education", [])
         
+        if not any([user_skills_list, user_experience_list_raw, user_education_list_raw]):
+            return [] # Return early for empty profiles
+
         user_total_years_exp = get_user_total_experience_years(user_experience_list_raw)
         user_experience_level_cat = categorize_user_experience(user_total_years_exp)
         
-        print(f"--- USER PROFILE FOR MATCHING (User UID: {user_uid}) ---")
-        print(f"User Skills for Keyword: {user_skills_list}")
-        print(f"User Total Years Exp: {user_total_years_exp:.2f}, Categorized Level: {user_experience_level_cat}")
-        print(f"User Education Raw: {user_education_list_raw}")
-
-        # --- User text for MAIN semantic embedding (Skills + Experience ONLY) ---
         user_profile_text_parts_main = []
-        if user_skills_list: 
-            # More direct phrasing for skills
-            user_profile_text_parts_main.append("Key skills: " + ", ".join(user_skills_list) + ".")
+        if user_skills_list: user_profile_text_parts_main.append("Key skills: " + ", ".join(user_skills_list) + ".")
         if user_experience_list_raw:
-            exp_texts = []
-            for exp in user_experience_list_raw:
-                title = exp.get('title', 'a role')
-                company = exp.get('company', 'a company')
-                desc = exp.get('description', 'various tasks')
-                # Concise but informative
-                exp_texts.append(f"Professional experience as {title} at {company}, focusing on {desc}.")
-            if exp_texts: 
-                user_profile_text_parts_main.append("Work history includes: " + " ".join(exp_texts))
+            exp_texts = [f"Professional experience as {exp.get('title', 'a role')}..." for exp in user_experience_list_raw if exp.get('title')]
+            if exp_texts: user_profile_text_parts_main.append("Work history includes: " + " ".join(exp_texts))
+        user_text_for_main_embedding = " ".join(user_profile_text_parts_main).strip() or "General profile"
+        user_main_embedding = sentence_model.encode(user_text_for_main_embedding, convert_to_tensor=True).unsqueeze(0)
         
-        user_text_for_main_embedding = " ".join(user_profile_text_parts_main).strip()
-        if not user_text_for_main_embedding: 
-            user_text_for_main_embedding = "General professional profile." 
-        
-        print(f"User Text for Main Embedding (Skills & Exp): '{user_text_for_main_embedding[:300]}...'") # Log snippet
-        
-        user_main_embedding = sentence_model.encode(user_text_for_main_embedding, convert_to_tensor=True)
-        if len(user_main_embedding.shape) == 1: user_main_embedding = user_main_embedding.unsqueeze(0)
-        
-        # --- Pre-compute User EDUCATION Embeddings ---
-        user_education_embeddings_tensor: Optional[torch.Tensor] = None
-        if user_education_list_raw and sentence_model:
-            education_texts_for_embedding = []
-            for edu_item in user_education_list_raw:
-                degree = edu_item.get('degree', '').strip()
-                school = edu_item.get('school', '').strip()
-                # Concise education text
-                edu_entry_text = f"{degree} from {school}".strip() if degree and school else degree or school
-                if edu_entry_text: education_texts_for_embedding.append(edu_entry_text)
-            
-            if education_texts_for_embedding:
-                # print(f"[DEBUG] Encoding {len(education_texts_for_embedding)} user education entries: {education_texts_for_embedding}")
-                user_education_embeddings_tensor = sentence_model.encode(education_texts_for_embedding, convert_to_tensor=True)
+        user_education_embeddings_tensor = None
+        if user_education_list_raw:
+            edu_texts = [f"{edu.get('degree','')}" for edu in user_education_list_raw if edu.get('degree')]
+            if edu_texts:
+                user_education_embeddings_tensor = sentence_model.encode(edu_texts, convert_to_tensor=True)
                 if user_education_embeddings_tensor.nelement() > 0 and len(user_education_embeddings_tensor.shape) == 1:
                     user_education_embeddings_tensor = user_education_embeddings_tensor.unsqueeze(0)
-                elif user_education_embeddings_tensor.nelement() == 0: 
-                    user_education_embeddings_tensor = None
-        print(f"------------------------------------")
+    except Exception as e: print(f"ERROR processing user profile: {e}"); raise HTTPException(500, "Could not process user profile")
 
-    except Exception as e:
-        print(f"ERROR processing user profile for {user_uid}: {e}"); import traceback; traceback.print_exc()
-        raise HTTPException(500, "Could not process user profile")
-
+    # 2. Calculate Scores and Match
     matched_jobs_output = []
     try:
-        all_main_semantic_scores_np = None
-        if user_main_embedding is not None and not torch.isnan(user_main_embedding).any():
-            cosine_scores_tensor = util.cos_sim(user_main_embedding, job_embeddings)[0] 
-            all_main_semantic_scores_np = cosine_scores_tensor.cpu().numpy()
-        else:
-            print("[WARN] User main embedding is None or NaN, main semantic scores will be 0.")
-
+        all_main_semantic_scores_np = util.cos_sim(user_main_embedding, job_embeddings)[0].cpu().numpy()
+        
         for idx, job_row in jobs_df.iterrows():
-            main_semantic_score = float(all_main_semantic_scores_np[idx]) if all_main_semantic_scores_np is not None and idx < len(all_main_semantic_scores_np) else 0.0
-            job_req_skills_list = job_row.get('requiredSkills', [])
-            keyword_s = calculate_keyword_match_score(user_skills_list, job_req_skills_list)
-            job_exp_level_req_str = job_row.get('experience_level_required')
-            experience_s = calculate_experience_level_match_score(user_experience_level_cat, job_exp_level_req_str)
+            main_s = float(all_main_semantic_scores_np[idx])
+            keyword_s = calculate_keyword_match_score(user_skills_list, job_row.get('requiredSkills', []))
+            experience_s = calculate_experience_level_match_score(user_experience_level_cat, job_row.get('experience_level_required'))
             
-            current_job_full_text_embedding = job_embeddings[idx] 
-            education_semantic_s = calculate_education_semantic_score(
-                user_education_embeddings_tensor, # Pass pre-computed tensor
-                current_job_full_text_embedding,
-                # sentence_model is NOT needed here anymore by the revised function
-            )
+            # Using the main job embedding for education semantic score as a fallback if specific skills embedding isn't available
+            current_job_embedding = job_embeddings[idx]
+            education_semantic_s = calculate_education_semantic_score(user_education_embeddings_tensor, current_job_embedding)
             
             edu_presence_b = education_presence_bonus if user_education_list_raw else 0.0
             
-            final_score = (semantic_profile_weight * main_semantic_score) + \
-                          (keyword_weight * keyword_s) + \
-                          (experience_level_weight * experience_s) + \
-                          (education_semantic_weight * education_semantic_s) + \
-                          edu_presence_b
-            final_score = min(final_score, 1.0) 
-
-            # --- Debugging for a specific job title ---
-            #target_job_title_debug = "Data Analyst" # Change this to a title you are investigating
-            #current_job_title_debug = job_row.get('title', 'N/A')
-            #if target_job_title_debug.lower() in current_job_title_debug.lower(): # Or check by ID
-             #   print(f"\n--- DEBUG JOB: {current_job_title_debug} (ID: {job_row.get('id')}) ---")
-              #  print(f"Job Text for Embedding: {job_row.get('text_for_embedding', 'N/A')[:200]}...") # Print start of job text
-               # print(f"Scores (pre-weight): MainSem={main_semantic_score:.3f}, Keyword={keyword_s:.3f}, ExpLvl={experience_s:.3f}, EduSem={education_semantic_s:.3f}")
-                #print(f"EduPresenceBonus: {edu_presence_b:.3f}")
-                #print(f"Weighted: MainSem={(semantic_profile_weight * main_semantic_score):.3f}, Key={(keyword_weight * keyword_s):.3f}, ExpLvl={(experience_level_weight * experience_s):.3f}, EduSem={(education_semantic_weight * education_semantic_s):.3f}")
-                #print(f"Final Score: {final_score:.3f}")
-                #print(f"-------------------------------------------\n")
-                
+            final_score = (semantic_profile_weight * main_s) + (keyword_weight * keyword_s) + \
+                          (experience_level_weight * experience_s) + (education_semantic_weight * education_semantic_s) + edu_presence_b
+            final_score = min(max(final_score, 0.0), 1.0)
+            
             if final_score >= min_score_threshold:
+                user_skills_set_lower = set(s.lower() for s in user_skills_list)
+                job_skills_set_lower = set(s.lower() for s in job_row.get('requiredSkills', []))
+                matching_keywords_lower = user_skills_set_lower.intersection(job_skills_set_lower)
+                matching_keywords_display = sorted([s for s in user_skills_list if s.lower() in matching_keywords_lower])
+                
                 try:
-                    # ... (create job_instance_data and append MatchedJob - same as before) ...
                     job_data_dict = job_row.to_dict()
                     job_instance_data = {
-                        "id": str(job_data_dict.get('id', '')),
-                        "title": job_data_dict.get('title', 'N/A'), 
-                        "company": job_data_dict.get('company', None),
-                        "description": job_data_dict.get('description', ""), 
-                        "requiredSkills": job_data_dict.get('requiredSkills', []), 
-                        "experience_level_required": job_data_dict.get('experience_level_required', None),
-                        "matchScore": final_score
+                        "id": str(job_data_dict.get('id', '')), "title": job_data_dict.get('title', 'N/A'),
+                        "company": job_data_dict.get('company'), "description": job_data_dict.get('description'),
+                        "requiredSkills": job_data_dict.get('requiredSkills'), "experience_level_required": job_data_dict.get('experience_level_required'),
+                        "matchScore": final_score,
+                        "matching_keywords": matching_keywords_display,
+                        "score_components": {
+                            "semantic_profile_score": main_s, "keyword_skill_score": keyword_s,
+                            "experience_level_score": experience_s, "education_semantic_score": education_semantic_s
+                        }
                     }
                     matched_jobs_output.append(MatchedJob(**job_instance_data))
-                except Exception as val_err:
-                    print(f"[ERROR] Skipping job index {idx} (ID: {job_data_dict.get('id', 'UNKNOWN')}) due to Pydantic validation: {val_err}")
+                except Exception as val_err: print(f"[ERROR] Skipping job index {idx} due to Pydantic validation: {val_err}")
 
-    except Exception as e:
-        print(f"ERROR during job processing loop: {e}"); import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error calculating job matches")
-
+    except Exception as e: print(f"ERROR during job processing loop: {e}"); raise HTTPException(status_code=500, detail="Error calculating job matches")
+    
     matched_jobs_output.sort(key=lambda job: job.matchScore, reverse=True)
-    print(f"=== HYBRID Job Match (New Dataset, Refined Embeddings) Finished. Found {len(matched_jobs_output)} matches. ===")
+    print(f"=== HYBRID Job Match (Detailed Insights) Finished. Found {len(matched_jobs_output)} matches. ===")
     return matched_jobs_output
