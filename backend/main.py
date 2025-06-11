@@ -328,22 +328,40 @@ def calculate_education_semantic_score(user_education_embeddings: Optional[torch
 # ... (GET /, GET /api/profile (with modification), PUT skills, edu, exp - same as your code) ...
 @app.get("/api/profile", response_model=UserProfileResponse)
 async def get_user_profile(current_user: Annotated[dict, Depends(get_current_user)]):
-    if db is None: raise HTTPException(status_code=503, detail="Firestore service unavailable")
+    if db is None:
+        raise HTTPException(status_code=503, detail="Firestore service unavailable")
     user_uid = current_user.get("uid")
+    user_email = current_user.get("email", "")
+    user_display_name = current_user.get("name", "")
+    user_photo_url = current_user.get("picture", "")
+    user_created_at = datetime.fromtimestamp(current_user.get("auth_time", 0))
+
     try:
         user_doc_ref = db.collection("users").document(user_uid)
         user_doc = user_doc_ref.get()
-        if user_doc.exists:
-            profile_data = user_doc.to_dict()
-            profile_data["uid"] = user_uid 
-            # --- MODIFICATION: Ensure saved_job_ids field exists ---
-            profile_data.setdefault("saved_job_ids", [])
-            return UserProfileResponse(**profile_data)
-        else:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User profile not found")
+
+        if not user_doc.exists:
+            # This creates the Firestore document on first access
+            user_doc_ref.set({
+                "email": user_email,
+                "displayName": user_display_name,
+                "photoURL": user_photo_url,
+                "createdAt": user_created_at,
+                "skills": [],
+                "education": [],
+                "experience": [],
+                "saved_job_ids": []
+            })
+            print(f"Created Firestore profile for UID: {user_uid}")
+
+        profile_data = user_doc_ref.get().to_dict()
+        profile_data["uid"] = user_uid
+        profile_data.setdefault("saved_job_ids", [])
+
+        return UserProfileResponse(**profile_data)
     except Exception as e:
-        print(f"Error fetching profile for {user_uid}: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not fetch profile")
+        print(f"Error fetching or creating profile for {user_uid}: {e}")
+        raise HTTPException(status_code=500, detail="Could not fetch or create user profile")
 
 # --- NEW ENDPOINTS FOR SAVED JOBS ---
 @app.post("/api/profile/saved-jobs/{job_id}", status_code=status.HTTP_200_OK)
