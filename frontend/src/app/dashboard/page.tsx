@@ -125,8 +125,8 @@ export default function DashboardPage() {
             <div className="container mx-auto p-4 sm:p-6 lg:p-8">
                 {/*welcome header*/}
                 <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-gray-800">welcome back, {greetingName}!</h1>
-                    <p className="text-gray-600 mt-1">here's your professional dashboard at a glance.</p>
+                    <h1 className="text-3xl font-bold text-gray-800">Welcome back, {greetingName}!</h1>
+                    <p className="text-gray-600 mt-1">Here's your professional dashboard at a glance.</p>
                 </div>
                 
                 {/*main dashboard layout - job matches on left, profile status on right*/}
@@ -135,7 +135,7 @@ export default function DashboardPage() {
                     {/*job matches section - takes up 2/3 of the width on desktop*/}
                     <div className="lg:col-span-2">
                         <div className="p-6 bg-white rounded-lg shadow-md">
-                            <h2 className="text-xl font-semibold text-gray-800 mb-4">your top job matches</h2>
+                            <h2 className="text-xl font-semibold text-gray-800 mb-4">Your top job matches</h2>
                             {isLoading ? (
                                 //show loading skeletons while fetching
                                 <div className="space-y-4">
@@ -165,7 +165,7 @@ export default function DashboardPage() {
                                     {/*if there are more than 3 matches, show link to see all*/}
                                     {matches.length > 3 && (
                                         <Link href="/job-matches" className="block text-center mt-6 px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition">
-                                            view all {matches.length} matches &rarr;
+                                            View all {matches.length} matches &rarr;
                                         </Link>
                                     )}
                                 </div>
@@ -188,7 +188,7 @@ export default function DashboardPage() {
                             <ProfileStatusSkeleton />
                         ) : (
                             <div className="p-6 bg-white rounded-lg shadow-md">
-                                <h2 className="text-xl font-semibold text-gray-800 mb-4">profile status</h2>
+                                <h2 className="text-xl font-semibold text-gray-800 mb-4">Profile status</h2>
                                 
                                 {/*visual progress bar showing completion percentage*/}
                                 <div className="w-full bg-gray-200 rounded-full h-2.5 mb-4">
@@ -203,15 +203,15 @@ export default function DashboardPage() {
                                 <ul className="space-y-3">
                                     <li className="flex items-center">
                                         {completeness.skills ? '✅' : '❌'}
-                                        <span className="ml-3 text-gray-700">skills added</span>
+                                        <span className="ml-3 text-gray-700">Skills added</span>
                                     </li>
                                     <li className="flex items-center">
                                         {completeness.education ? '✅' : '❌'}
-                                        <span className="ml-3 text-gray-700">education added</span>
+                                        <span className="ml-3 text-gray-700">Education added</span>
                                     </li>
                                     <li className="flex items-center">
                                         {completeness.experience ? '✅' : '❌'}
-                                        <span className="ml-3 text-gray-700">experience added</span>
+                                        <span className="ml-3 text-gray-700">Experience added</span>
                                     </li>
                                 </ul>
                                 
@@ -222,13 +222,13 @@ export default function DashboardPage() {
                             </div>
                         )}
 
-                        {/*quick stats card - only show if we have match data*/}
+                        {/*quick stats card - only show if we have match data   */}
                         {!isLoading && matches.length > 0 && (
                             <div className="p-6 bg-white rounded-lg shadow-md mt-8">
-                                <h2 className="text-xl font-semibold text-gray-800 mb-4">quick stats</h2>
+                                <h2 className="text-xl font-semibold text-gray-800 mb-4">Quick stats</h2>
                                 <div className="space-y-2">
-                                    <p className="text-gray-700">total matches found: <span className="font-bold text-indigo-600">{matches.length}</span></p>
-                                    <p className="text-gray-700">highest match score: <span className="font-bold text-indigo-600">{`${(matches[0].matchScore * 100).toFixed(0)}%`}</span></p>
+                                    <p className="text-gray-700">Total matches found: <span className="font-bold text-indigo-600">{matches.length}</span></p>
+                                    <p className="text-gray-700">Highest match score: <span className="font-bold text-indigo-600">{`${(matches[0].matchScore * 100).toFixed(0)}%`}</span></p>
                                 </div>
                             </div>
                         )}

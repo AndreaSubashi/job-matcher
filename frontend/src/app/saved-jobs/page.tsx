@@ -92,11 +92,11 @@ export default function SavedJobsPage() {
             <div className="bg-gray-50 min-h-screen">
                 <div className="container mx-auto p-4 sm:p-6 lg:p-8">
                     <div className="mb-8">
-                        <h1 className="text-3xl font-bold text-gray-800">your saved jobs</h1>
-                        <p className="text-gray-600 mt-1">review and manage the opportunities you're interested in</p>
+                        <h1 className="text-3xl font-bold text-gray-800">Your saved jobs</h1>
+                        <p className="text-gray-600 mt-1">Review and manage the opportunities you're interested in</p>
                     </div>
 
-                    {isLoading && <p>loading saved jobs...</p>}
+                    {isLoading && <p>Loading saved jobs...</p>}
                     {error && <p className="text-red-500">{error}</p>}
                     
                     {!isLoading && !error && (
@@ -122,10 +122,10 @@ export default function SavedJobsPage() {
                                 </div>
                             ) : (
                                 <div className="text-center py-12 bg-white rounded-lg shadow-md">
-                                    <h3 className="text-xl font-semibold text-gray-700">no jobs saved yet</h3>
-                                    <p className="mt-2 text-gray-500">click the bookmark icon on a job listing to save it here</p>
+                                    <h3 className="text-xl font-semibold text-gray-700">No jobs saved yet</h3>
+                                    <p className="mt-2 text-gray-500">Click the bookmark icon on a job listing to save it here</p>
                                     <Link href="/job-matches" className="mt-6 inline-block px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
-                                        find job matches
+                                        Find job matches
                                     </Link>
                                 </div>
                             )}
