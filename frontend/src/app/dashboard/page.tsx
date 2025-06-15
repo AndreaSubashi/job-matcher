@@ -1,4 +1,3 @@
-// frontend/src/app/dashboard/page.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -6,9 +5,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 
-// --- TypeScript Interfaces for the data we expect ---
-
-// Simplified UserProfile to get completeness status
+//basic user profile structure - just what we need for dashboard
 interface UserProfile {
     skills: any[];
     education: any[];
@@ -16,7 +13,7 @@ interface UserProfile {
     displayName?: string;
 }
 
-// Job match data structure
+//job match structure from our api
 interface MatchedJob {
     id: string;
     title: string;
@@ -24,9 +21,7 @@ interface MatchedJob {
     matchScore: number;
 }
 
-// --- Helper Components (defined within the file for simplicity) ---
-
-// Loading Skeleton for a Job Card
+//loading placeholder for job cards - shows while we fetch data
 const JobCardSkeleton = () => (
     <div className="p-4 bg-gray-100 rounded-lg animate-pulse">
         <div className="h-5 bg-gray-300 rounded w-3/4 mb-2"></div>
@@ -35,7 +30,7 @@ const JobCardSkeleton = () => (
     </div>
 );
 
-// Loading Skeleton for the Profile Status card
+//loading placeholder for profile status section
 const ProfileStatusSkeleton = () => (
     <div className="p-6 bg-white rounded-lg shadow-md animate-pulse">
         <div className="h-6 bg-gray-300 rounded w-1/2 mb-4"></div>
@@ -49,25 +44,27 @@ const ProfileStatusSkeleton = () => (
     </div>
 );
 
-
 export default function DashboardPage() {
     const { user, loading: authLoading } = useAuth();
     const router = useRouter();
 
-    // State for data fetched from our APIs
+    //main dashboard data
     const [profile, setProfile] = useState<UserProfile | null>(null);
     const [matches, setMatches] = useState<MatchedJob[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
+    //fetch user profile and job matches from our backend
     const fetchData = useCallback(async () => {
         if (!user) return;
+        
         setIsLoading(true);
         setError(null);
+        
         try {
             const token = await user.getIdToken();
             
-            // Fetch both profile and matches in parallel
+            //hit both endpoints at once to save time
             const [profileRes, matchesRes] = await Promise.all([
                 fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/profile`, {
                     headers: { 'Authorization': `Bearer ${token}` }
@@ -77,29 +74,31 @@ export default function DashboardPage() {
                 })
             ]);
 
+            //profile might not exist for new users - that's ok
             if (!profileRes.ok) {
-                // If profile fetch fails, it might be a new user. We can still show matches.
-                console.warn("Could not fetch user profile, it might be new.");
+                console.warn("couldn't fetch user profile, might be a new user");
             } else {
                 const profileData: UserProfile = await profileRes.json();
                 setProfile(profileData);
             }
 
+            //job matches are more critical - show error if this fails
             if (!matchesRes.ok) {
                 const errorData = await matchesRes.json();
-                throw new Error(errorData.detail || "Failed to fetch job matches.");
+                throw new Error(errorData.detail || "failed to fetch job matches");
             }
             const matchesData: MatchedJob[] = await matchesRes.json();
             setMatches(matchesData);
 
         } catch (err: any) {
-            console.error("Dashboard fetch error:", err);
+            console.error("dashboard fetch error:", err);
             setError(err.message);
         } finally {
             setIsLoading(false);
         }
     }, [user]);
 
+    //redirect to login if not authenticated, otherwise fetch dashboard data
     useEffect(() => {
         if (!authLoading && !user) {
             router.push('/');
@@ -109,8 +108,7 @@ export default function DashboardPage() {
         }
     }, [user, authLoading, router, fetchData]);
 
-
-    // --- Profile Completeness Calculation ---
+    //calculate how complete the user's profile is
     const completeness = {
         skills: profile && profile.skills && profile.skills.length > 0,
         education: profile && profile.education && profile.education.length > 0,
@@ -119,35 +117,38 @@ export default function DashboardPage() {
     const completedSections = Object.values(completeness).filter(Boolean).length;
     const completenessPercent = Math.round((completedSections / 3) * 100);
 
-    const greetingName = profile?.displayName || user?.email?.split('@')[0] || 'User';
+    //figure out what to call the user - display name, email prefix, or fallback
+    const greetingName = profile?.displayName || user?.email?.split('@')[0] || 'user';
 
     return (
         <div className="bg-gray-50 min-h-screen">
             <div className="container mx-auto p-4 sm:p-6 lg:p-8">
-                {/* --- Header --- */}
+                {/*welcome header*/}
                 <div className="mb-8">
-                    <h1 className="text-3xl font-bold text-gray-800">Welcome back, {greetingName}!</h1>
-                    <p className="text-gray-600 mt-1">Here's your professional dashboard at a glance.</p>
+                    <h1 className="text-3xl font-bold text-gray-800">welcome back, {greetingName}!</h1>
+                    <p className="text-gray-600 mt-1">here's your professional dashboard at a glance.</p>
                 </div>
                 
-                {/* --- Main Content Grid --- */}
+                {/*main dashboard layout - job matches on left, profile status on right*/}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     
-                    {/* --- Left Column: Top Job Matches --- */}
+                    {/*job matches section - takes up 2/3 of the width on desktop*/}
                     <div className="lg:col-span-2">
                         <div className="p-6 bg-white rounded-lg shadow-md">
-                            <h2 className="text-xl font-semibold text-gray-800 mb-4">Your Top Job Matches</h2>
+                            <h2 className="text-xl font-semibold text-gray-800 mb-4">your top job matches</h2>
                             {isLoading ? (
+                                //show loading skeletons while fetching
                                 <div className="space-y-4">
                                     <JobCardSkeleton />
                                     <JobCardSkeleton />
                                     <JobCardSkeleton />
                                 </div>
                             ) : error ? (
-                                <p className="text-red-500">Could not load job matches.</p>
+                                //simple error message if fetch failed
+                                <p className="text-red-500">could not load job matches.</p>
                             ) : matches.length > 0 ? (
                                 <div className="space-y-4">
-                                    {/* Show top 3 matches */}
+                                    {/*show top 3 matches with hover effects*/}
                                     {matches.slice(0, 3).map(job => (
                                         <div key={job.id} className="p-4 border border-gray-200 rounded-lg hover:shadow-lg hover:border-indigo-300 transition-shadow duration-200">
                                             <div className="flex justify-between items-center">
@@ -161,73 +162,76 @@ export default function DashboardPage() {
                                             </div>
                                         </div>
                                     ))}
+                                    {/*if there are more than 3 matches, show link to see all*/}
                                     {matches.length > 3 && (
                                         <Link href="/job-matches" className="block text-center mt-6 px-4 py-2 text-indigo-600 font-semibold rounded-lg hover:bg-indigo-50 transition">
-                                            View All {matches.length} Matches &rarr;
+                                            view all {matches.length} matches &rarr;
                                         </Link>
                                     )}
                                 </div>
                             ) : (
+                                //empty state - encourage user to complete profile
                                 <div className="text-center py-8">
-                                    <p className="text-gray-600">No job matches found right now.</p>
-                                    <p className="text-sm text-gray-500 mt-1">Try adding more details to your profile for better results.</p>
+                                    <p className="text-gray-600">no job matches found right now.</p>
+                                    <p className="text-sm text-gray-500 mt-1">try adding more details to your profile for better results.</p>
                                     <Link href="/profile" className="mt-4 inline-block px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">
-                                        Update Profile
+                                        update profile
                                     </Link>
                                 </div>
                             )}
                         </div>
                     </div>
                     
-                    {/* --- Right Column: Profile Status --- */}
+                    {/*profile status sidebar - takes up 1/3 of width on desktop*/}
                     <div className="lg:col-span-1">
                         {isLoading ? (
                             <ProfileStatusSkeleton />
                         ) : (
                             <div className="p-6 bg-white rounded-lg shadow-md">
-                                <h2 className="text-xl font-semibold text-gray-800 mb-4">Profile Status</h2>
+                                <h2 className="text-xl font-semibold text-gray-800 mb-4">profile status</h2>
                                 
-                                {/* Progress Bar */}
+                                {/*visual progress bar showing completion percentage*/}
                                 <div className="w-full bg-gray-200 rounded-full h-2.5 mb-4">
                                     <div 
                                         className="bg-green-500 h-2.5 rounded-full" 
                                         style={{ width: `${completenessPercent}%` }}
                                     ></div>
                                 </div>
-                                <p className="text-right text-sm font-medium text-gray-700 mb-4">{completenessPercent}% Complete</p>
+                                <p className="text-right text-sm font-medium text-gray-700 mb-4">{completenessPercent}% complete</p>
                                 
-                                {/* Checklist */}
+                                {/*checklist of profile sections*/}
                                 <ul className="space-y-3">
                                     <li className="flex items-center">
                                         {completeness.skills ? '✅' : '❌'}
-                                        <span className="ml-3 text-gray-700">Skills Added</span>
+                                        <span className="ml-3 text-gray-700">skills added</span>
                                     </li>
                                     <li className="flex items-center">
                                         {completeness.education ? '✅' : '❌'}
-                                        <span className="ml-3 text-gray-700">Education Added</span>
+                                        <span className="ml-3 text-gray-700">education added</span>
                                     </li>
                                     <li className="flex items-center">
                                         {completeness.experience ? '✅' : '❌'}
-                                        <span className="ml-3 text-gray-700">Experience Added</span>
+                                        <span className="ml-3 text-gray-700">experience added</span>
                                     </li>
                                 </ul>
                                 
+                                {/*cta button - text changes based on completion status*/}
                                 <Link href="/profile" className="block w-full text-center mt-6 px-4 py-2 text-white font-semibold bg-indigo-600 rounded-lg hover:bg-indigo-700 transition">
-                                    {completenessPercent === 100 ? 'Review Profile' : 'Complete Profile'}
+                                    {completenessPercent === 100 ? 'review profile' : 'complete profile'}
                                 </Link>
                             </div>
                         )}
 
-                         {/* Quick Stats Card */}
-                         {!isLoading && matches.length > 0 && (
+                        {/*quick stats card - only show if we have match data*/}
+                        {!isLoading && matches.length > 0 && (
                             <div className="p-6 bg-white rounded-lg shadow-md mt-8">
-                                <h2 className="text-xl font-semibold text-gray-800 mb-4">Quick Stats</h2>
+                                <h2 className="text-xl font-semibold text-gray-800 mb-4">quick stats</h2>
                                 <div className="space-y-2">
-                                    <p className="text-gray-700">Total Matches Found: <span className="font-bold text-indigo-600">{matches.length}</span></p>
-                                    <p className="text-gray-700">Highest Match Score: <span className="font-bold text-indigo-600">{`${(matches[0].matchScore * 100).toFixed(0)}%`}</span></p>
+                                    <p className="text-gray-700">total matches found: <span className="font-bold text-indigo-600">{matches.length}</span></p>
+                                    <p className="text-gray-700">highest match score: <span className="font-bold text-indigo-600">{`${(matches[0].matchScore * 100).toFixed(0)}%`}</span></p>
                                 </div>
                             </div>
-                         )}
+                        )}
 
                     </div>
                 </div>

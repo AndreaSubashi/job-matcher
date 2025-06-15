@@ -1,23 +1,19 @@
-// frontend/src/app/page.tsx
-'use client'; // Landing page needs to be client component to manage modal state
+'use client'; //client component for modal state
 
 import React, { useState } from 'react';
-// Remove Link import if not used elsewhere on this page
-// import Link from 'next/link';
-import Modal from '@/components/ui/modal'; // Import the Modal component
-import LoginForm from '@/components/auth/LoginForm'; // Import the LoginForm
-import SignupForm from '@/components/auth/SignupForm'; // Import the SignupForm
-import { useAuth } from '@/context/AuthContext'; // <-- Import useAuth
-import Link from 'next/link'; // <-- Import Link
-
+import Modal from '@/components/ui/modal'; 
+import LoginForm from '@/components/auth/LoginForm'; 
+import SignupForm from '@/components/auth/SignupForm'; 
+import { useAuth } from '@/context/AuthContext'; 
+import Link from 'next/link';
 
 export default function HomePage() {
-  // State to control modal visibility
+  //modal visibility state
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [isSignupModalOpen, setIsSignupModalOpen] = useState(false);
-  const { user, loading } = useAuth(); // <-- Use the auth hook
+  const { user, loading } = useAuth();
 
-  // Functions to open/close modals
+  //modal controls
   const openLoginModal = () => { setIsSignupModalOpen(false); setIsLoginModalOpen(true); };
   const closeLoginModal = () => setIsLoginModalOpen(false);
   const openSignupModal = () => { setIsLoginModalOpen(false); setIsSignupModalOpen(true); };
@@ -25,11 +21,10 @@ export default function HomePage() {
   const switchToLogin = () => { closeSignupModal(); openLoginModal(); };
   const switchToSignup = () => { closeLoginModal(); openSignupModal(); };
 
-
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-12 md:p-24 bg-gradient-to-b from-indigo-50 via-white to-white">
        <div className="text-center max-w-3xl">
-        {/* ... Headline and description ... */}
+        {/* main headline */}
         <h1 className="text-4xl md:text-6xl font-bold text-indigo-800 mb-4 tracking-tight">
           Unlock Your Next Career Move
         </h1>
@@ -37,15 +32,13 @@ export default function HomePage() {
           Leverage AI to analyze your profile and discover job opportunities perfectly matched to your skills, education, and experience.
         </p>
 
-
-        {/* --- Conditionally Render Buttons --- */}
-        {/* Added min-height to prevent layout jumps during auth loading */}
+        {/* button area with auth logic */}
         <div className="flex flex-col sm:flex-row justify-center gap-4 min-h-[56px]">
           {loading ? (
-            // Show nothing or a placeholder while auth state loads
-            <div className="h-14 w-64 bg-gray-200 animate-pulse rounded-md"></div> // Example placeholder
+            //loading placeholder
+            <div className="h-14 w-64 bg-gray-200 animate-pulse rounded-md"></div>
           ) : !user ? (
-            // --- RENDER THIS BLOCK ONLY IF NOT LOGGED IN ---
+            //not logged in buttons
             <>
               <button
                 onClick={openSignupModal}
@@ -61,20 +54,18 @@ export default function HomePage() {
               </button>
             </>
           ) : (
-            // --- RENDER THIS BLOCK ONLY IF LOGGED IN ---
+            //logged in dashboard link
             <Link
-                href="/dashboard" // Or '/profile' or '/job-matches'
+                href="/dashboard"
                 className="px-8 py-3 text-lg font-semibold text-white bg-green-600 rounded-md shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition duration-150 ease-in-out"
               >
                 Go to Your Dashboard
               </Link>
           )}
         </div>
-        {/* --- End Conditional Buttons --- */}
-
        </div>
 
-       {/* --- Modals (Render conditionally is slightly cleaner) --- */}
+       {/* auth modals */}
        {!loading && !user && (
            <>
               <Modal isOpen={isLoginModalOpen} onClose={closeLoginModal} title="Login">

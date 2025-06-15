@@ -1,4 +1,3 @@
-// frontend/src/components/layout/Navbar.tsx
 'use client';
 
 import Link from 'next/link';
@@ -8,14 +7,14 @@ import { useRouter } from 'next/navigation';
 import { Menu, Transition } from '@headlessui/react';
 import { Fragment } from 'react';
 
-// A default user icon for fallback
+//fallback icon when user doesn't have a profile picture
 const UserCircleIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
         <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-6-3a2 2 0 11-4 0 2 2 0 014 0zM12 12a4 4 0 00-4 4h8a4 4 0 00-4-4z" clipRule="evenodd" />
     </svg>
 );
 
-// Chevron down icon for the dropdown indicator
+//dropdown indicator arrow that changes color on hover
 const ChevronDownIcon = () => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400 group-hover:text-gray-500 transition-colors" viewBox="0 0 20 20" fill="currentColor">
       <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
@@ -26,6 +25,7 @@ export default function Navbar() {
   const { user, loading } = useAuth();
   const pathname = usePathname();
 
+  //styles for active vs inactive navigation links
   const activeLinkClass = "text-indigo-600 font-semibold";
   const inactiveLinkClass = "text-gray-500 hover:text-indigo-600";
 
@@ -41,9 +41,11 @@ export default function Navbar() {
 
           <div className="flex items-center">
             {loading ? (
+              //shows pulsing circle while auth state is being determined
               <div className="h-8 w-8 bg-gray-200 rounded-full animate-pulse"></div>
             ) : user ? (
               <>
+                {/* desktop navigation links, hidden on mobile */}
                 <div className="hidden sm:flex items-center space-x-8">
                   <Link href="/dashboard" className={`${pathname === '/dashboard' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     Dashboard
@@ -54,16 +56,15 @@ export default function Navbar() {
                   <Link href="/job-matches" className={`${pathname === '/job-matches' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     Job Matches
                   </Link>
-                  {/* --- NEW LINK --- */}
                   <Link href="/saved-jobs" className={`${pathname === '/saved-jobs' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     Saved Jobs
                   </Link>
-                  {/* --- NEW LINK --- */}
                   <Link href="/how-it-works" className={`${pathname === '/how-it-works' ? activeLinkClass : inactiveLinkClass} text-sm font-medium transition-colors`}>
                     How It Works
                   </Link>
                 </div>
                 
+                {/* user dropdown menu with headlessui */}
                 <Menu as="div" className="relative ml-5">
                   <div>
                     <Menu.Button className="group flex items-center rounded-full bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
@@ -71,6 +72,7 @@ export default function Navbar() {
                       {user.photoURL ? (
                         <img className="h-8 w-8 rounded-full" src={user.photoURL} alt="User profile picture" referrerPolicy="no-referrer" />
                       ) : (
+                        //fallback icon in gray circle when no profile picture
                         <div className="h-8 w-8 rounded-full bg-gray-200 flex items-center justify-center"><UserCircleIcon/></div>
                       )}
                       <div className="ml-1.5"><ChevronDownIcon /></div>
@@ -86,12 +88,14 @@ export default function Navbar() {
                     leaveTo="transform opacity-0 scale-95"
                   >
                     <Menu.Items className="absolute right-0 z-10 mt-2 w-56 origin-top-right rounded-md bg-white py-1 shadow-lg border border-gray-200 focus:outline-none divide-y divide-gray-100">
+                      {/* user info section at top of dropdown */}
                       <div className="px-4 py-3">
                         <p className="text-sm text-gray-900">Signed in as</p>
                         <p className="truncate text-sm font-medium text-gray-800">{user.displayName || user.email}</p>
                       </div>
 
                       <div className="py-1">
+                        {/* mobile only navigation links inside dropdown */}
                         <div className="sm:hidden">
                             <Menu.Item>
                               {({ active }) => (<Link href="/dashboard" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Dashboard</Link>)}
@@ -102,17 +106,17 @@ export default function Navbar() {
                             <Menu.Item>
                               {({ active }) => (<Link href="/job-matches" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Job Matches</Link>)}
                             </Menu.Item>
-                             {/* --- NEW LINK (for mobile dropdown) --- */}
                             <Menu.Item>
                               {({ active }) => (<Link href="/saved-jobs" className={`${active ? 'bg-gray-100' : ''} block px-4 py-2 text-sm text-gray-700`}>Saved Jobs</Link>)}
                             </Menu.Item>
                         </div>
-                        {/* Always visible 'Your Profile' link in dropdown */}
+                        {/* desktop only profile link, hidden on mobile since it's already above */}
                         <Menu.Item>
                           {({ active }) => (<Link href="/profile" className={`${active ? 'bg-gray-100' : ''} hidden sm:block px-4 py-2 text-sm text-gray-700`}>Your Profile</Link>)}
                         </Menu.Item>
                       </div>
 
+                      {/* logout section at bottom with red styling */}
                       <div className="py-1">
                         <Menu.Item>
                           {({ active }) => {

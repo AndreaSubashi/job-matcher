@@ -1,4 +1,3 @@
-// frontend/src/app/job-matches/page.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
@@ -8,7 +7,7 @@ import Link from 'next/link';
 import Modal from '@/components/ui/modal';
 import Toast from '@/components/ui/toast';
 
-// --- SVG Icons for Save Button ---
+//bookmark icons
 const BookmarkIconOutline = () => (
     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
         <path strokeLinecap="round" strokeLinejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
@@ -20,14 +19,15 @@ const BookmarkIconSolid = () => (
     </svg>
 );
 
-// --- NEW: Helper Component for Visualizing Scores ---
+//progress bar for scores
 interface ProgressBarProps {
-    score: number; // A value between 0 and 1
+    score: number; //0 to 1 range
     label: string;
 }
 
 const ProgressBar = ({ score, label }: ProgressBarProps) => {
     const percent = Math.round(score * 100);
+    //color based on score
     let bgColor = 'bg-red-500';
     if (percent >= 70) {
         bgColor = 'bg-green-500';
@@ -51,8 +51,7 @@ const ProgressBar = ({ score, label }: ProgressBarProps) => {
     );
 };
 
-
-// --- UPDATED TypeScript Interfaces ---
+//match score breakdown
 interface ScoreComponents {
     semantic_profile_score: number;
     keyword_skill_score: number;
@@ -60,6 +59,7 @@ interface ScoreComponents {
     education_semantic_score: number;
 }
 
+//job match data structure
 interface MatchedJob {
     id: string;
     title: string;
@@ -69,14 +69,15 @@ interface MatchedJob {
     requiredSkills: string[];
     matchScore: number;
     experience_level_required?: string | null;
-    score_components: ScoreComponents; // <-- NEW
-    matching_keywords: string[];     // <-- NEW
+    score_components: ScoreComponents;
+    matching_keywords: string[];
 }
 
 export default function JobMatchesPage() {
     const { user, loading: authLoading } = useAuth();
     const router = useRouter();
 
+    //state management
     const [matches, setMatches] = useState<MatchedJob[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -89,6 +90,7 @@ export default function JobMatchesPage() {
     const [isJobModalOpen, setIsJobModalOpen] = useState(false);
     const [selectedJob, setSelectedJob] = useState<MatchedJob | null>(null);
 
+    //modal controls
     const openJobModal = (job: MatchedJob) => {
         setSelectedJob(job);
         setIsJobModalOpen(true);
@@ -99,6 +101,7 @@ export default function JobMatchesPage() {
         setTimeout(() => setSelectedJob(null), 300);
     };
 
+    //fetch matches and saved jobs
     const fetchInitialData = useCallback(async () => {
         if (!user) return;
         setIsLoading(true);
@@ -135,20 +138,24 @@ export default function JobMatchesPage() {
         }
     }, [user]);
 
+    //redirect if not logged in
     useEffect(() => {
         if (!authLoading && !user) router.push('/');
         if (user) fetchInitialData();
     }, [user, authLoading, router, fetchInitialData]);
 
+    //toast helper
     const showAndClearMessage = (message: string, type: 'success' | 'error') => {
         setToastType(type);
         setToastMessage(message);
         setTimeout(() => setToastMessage(null), 3000);
     };
 
+    //save/unsave job functionality
     const handleToggleSave = async (jobId: string, isCurrentlySaved: boolean) => {
         if (!user) return;
         
+        //optimistic update
         const originalSavedIds = new Set(savedJobIds);
         const newSavedJobIds = new Set(savedJobIds);
         if (isCurrentlySaved) {
@@ -173,6 +180,7 @@ export default function JobMatchesPage() {
         }
     };
 
+    //sorting logic
     const sortedMatches = useMemo(() => {
         const sortableMatches = [...matches];
         switch (sortOrder) {
@@ -183,6 +191,7 @@ export default function JobMatchesPage() {
         }
     }, [matches, sortOrder]);
     
+    //loading states
     if (authLoading) { return <div className="flex justify-center items-center min-h-screen text-gray-500">Checking authentication...</div>; }
     if (!user) { return <div className="flex justify-center items-center min-h-screen text-gray-500">Redirecting to login...</div>; }
 
@@ -190,7 +199,7 @@ export default function JobMatchesPage() {
         <>
             <div className="bg-gray-50 min-h-screen">
                 <div className="container mx-auto p-4 sm:p-6 lg:p-8">
-                    {/* Header & Sorting Controls */}
+                    {/* header section */}
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
                         <div>
                             <h1 className="text-3xl font-bold text-gray-800">Your Job Matches</h1>
@@ -209,9 +218,13 @@ export default function JobMatchesPage() {
                         </div>
                     </div>
                     
+                    {/* loading skeleton */}
                     {isLoading && <div className="space-y-6 max-w-4xl mx-auto">{[...Array(5)].map((_, i) => <div key={i} className="p-6 bg-white rounded-lg shadow-md animate-pulse"><div className="h-6 bg-gray-300 rounded w-2/3 mb-3"></div><div className="h-4 bg-gray-300 rounded w-1/3 mb-5"></div><div className="flex flex-wrap gap-2"><div className="h-5 bg-gray-200 rounded-full w-20"></div><div className="h-5 bg-gray-200 rounded-full w-24"></div><div className="h-5 bg-gray-200 rounded-full w-16"></div></div></div>)}</div>}
+                    
+                    {/* error state */}
                     {error && <div className="my-4 text-center text-red-600 p-4 bg-red-100 rounded shadow max-w-4xl mx-auto"><p><strong>Error fetching job matches:</strong></p><p>{error}</p><button onClick={fetchInitialData} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Retry</button></div>}
 
+                    {/* job matches list */}
                     {!isLoading && !error && (
                         <div className="max-w-4xl mx-auto">
                             {sortedMatches.length > 0 ? (
@@ -220,9 +233,11 @@ export default function JobMatchesPage() {
                                         const isSaved = savedJobIds.has(job.id);
                                         return (
                                             <div key={job.id} className="p-6 bg-white rounded-lg shadow-md border border-gray-200 transition hover:shadow-lg hover:border-indigo-300 relative group">
+                                                {/* save button */}
                                                 <button onClick={(e) => { e.stopPropagation(); handleToggleSave(job.id, isSaved); }} className="absolute top-4 right-4 p-2 rounded-full hover:bg-gray-100 text-gray-500 hover:text-indigo-600 transition-colors z-10" aria-label={isSaved ? 'Unsave job' : 'Save job'}>
                                                     {isSaved ? <BookmarkIconSolid /> : <BookmarkIconOutline />}
                                                 </button>
+                                                {/* job card content */}
                                                 <div className="cursor-pointer pr-12" onClick={() => openJobModal(job)}>
                                                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-2 gap-2">
                                                         <div className="flex-grow"><h2 className="text-xl font-semibold text-indigo-700 group-hover:underline">{job.title}</h2><p className="text-md text-gray-800">{job.company}</p>{job.location && job.location !== 'N/A' && <p className="text-sm text-gray-500">{job.location}</p>}</div>
@@ -235,7 +250,10 @@ export default function JobMatchesPage() {
                                         );
                                     })}
                                 </div>
-                            ) : ( <div className="text-center py-12 bg-white rounded-lg shadow-md"><h3 className="text-xl font-semibold text-gray-700">No Job Matches Found</h3><p className="mt-2 text-gray-500">Based on your current profile, we couldn't find any relevant opportunities.</p><Link href="/profile" className="mt-6 inline-block px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">Update Your Profile</Link></div>)}
+                            ) : ( 
+                                //empty state
+                                <div className="text-center py-12 bg-white rounded-lg shadow-md"><h3 className="text-xl font-semibold text-gray-700">No Job Matches Found</h3><p className="mt-2 text-gray-500">Based on your current profile, we couldn't find any relevant opportunities.</p><Link href="/profile" className="mt-6 inline-block px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">Update Your Profile</Link></div>
+                            )}
                         </div>
                     )}
                 </div>
@@ -243,10 +261,11 @@ export default function JobMatchesPage() {
             
             <Toast show={!!toastMessage} message={toastMessage || ''} type={toastType} />
             
+            {/* job details modal */}
             <Modal isOpen={isJobModalOpen} onClose={closeJobModal}>
                 {selectedJob && (
                     <div className="space-y-6">
-                        {/* Main Job Info */}
+                        {/* job header */}
                         <div className="flex justify-between items-start">
                             <div>
                                 <h2 className="text-2xl font-bold text-indigo-700">{selectedJob.title}</h2>
@@ -256,7 +275,7 @@ export default function JobMatchesPage() {
                             <span className={`flex-shrink-0 px-4 py-1.5 rounded-full text-md font-semibold ${selectedJob.matchScore >= 0.7 ? 'bg-green-100 text-green-800' : selectedJob.matchScore >= 0.5 ? 'bg-yellow-100 text-yellow-800' : 'bg-orange-100 text-orange-800'}`}>{`${(selectedJob.matchScore * 100).toFixed(0)}% Match`}</span>
                         </div>
 
-                        {/* NEW: Match Insights Section */}
+                        {/* match breakdown */}
                         <div className="border-t border-gray-200 pt-4 space-y-4">
                             <h3 className="text-lg font-semibold text-gray-800">Match Insights</h3>
                             <ProgressBar score={selectedJob.score_components.semantic_profile_score} label="Profile Context Match" />
@@ -277,7 +296,7 @@ export default function JobMatchesPage() {
                             <ProgressBar score={selectedJob.score_components.education_semantic_score} label="Education Relevance" />
                         </div>
 
-                        {/* Full Job Details */}
+                        {/* full job details */}
                         <div className="border-t border-gray-200 pt-4 space-y-4">
                             {selectedJob.description && (
                                 <div>

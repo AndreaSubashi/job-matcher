@@ -1,4 +1,3 @@
-// frontend/src/app/profile/page.tsx
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
@@ -7,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import { v4 as uuidv4 } from 'uuid';
 import Toast from '@/components/ui/toast';
 
-// --- Interfaces ---
 interface EducationItem {
     id: string;
     degree: string;
@@ -38,7 +36,7 @@ interface UserProfile {
 const defaultNewEducation: Partial<EducationItem> = { degree: '', school: '', startYear: undefined, endYear: undefined };
 const defaultNewExperience: Partial<ExperienceItem> = { title: '', company: '', startDate: '', endDate: '', location: '', description: '' };
 
-// --- Reusable Tailwind CSS classes ---
+//reusable styles to keep things consistent
 const inputStyle = "block w-full px-3 py-2 mt-1 text-gray-900 placeholder-gray-500 border border-gray-300 rounded-md shadow-sm appearance-none focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm";
 const btnPrimary = "px-4 py-2 text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50";
 const btnGreen = "px-5 py-2 text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50";
@@ -68,6 +66,7 @@ export default function ProfilePage() {
     const [newExperienceEntry, setNewExperienceEntry] = useState<Partial<ExperienceItem>>(defaultNewExperience);
     const [savingExperience, setSavingExperience] = useState(false);
     
+    //keep track of what's being edited so only one form is open at a time
     const [editingEducationId, setEditingEducationId] = useState<string | null>(null);
     const [editedEducationData, setEditedEducationData] = useState<Partial<EducationItem>>({});
     const [editingExperienceId, setEditingExperienceId] = useState<string | null>(null);
@@ -108,12 +107,14 @@ export default function ProfilePage() {
         }
     }, [user, authLoading, router, profile, fetchProfile]);
 
+    //helper to show temporary messages
     const showAndClearMessage = (setter: React.Dispatch<React.SetStateAction<string | null>>, message: string) => {
         setter(message);
         setTimeout(() => setter(null), 3000);
     };
     const clearMessages = () => { setError(null); setSuccessMessage(null); };
 
+    //skills management
     const handleAddSkill = () => {
         clearMessages();
         const trimmedSkill = newSkill.trim();
@@ -138,6 +139,7 @@ export default function ProfilePage() {
         } catch (err: any) { showAndClearMessage(setError, err.message); } finally { setSavingSkills(false); }
     };
 
+    //education management
     const handleAddNewEducation = () => {
         clearMessages();
         if (!newEducationEntry.degree || !newEducationEntry.school) { showAndClearMessage(setError, "Degree and School are required."); return; }
@@ -160,7 +162,7 @@ export default function ProfilePage() {
         } catch (err: any) { showAndClearMessage(setError, err.message); } finally { setSavingEducation(false); }
     };
     const handleStartEditEducation = (eduItem: EducationItem) => {
-        setEditingExperienceId(null);
+        setEditingExperienceId(null); //close any open experience edit form
         setEditingEducationId(eduItem.id);
         setEditedEducationData(eduItem);
     };
@@ -171,6 +173,7 @@ export default function ProfilePage() {
     };
     const handleEditEducationFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
+        //handle year fields differently - convert to number or null
         setEditedEducationData(prev => ({ ...prev, [name]: name.includes('Year') ? (value === '' ? null : parseInt(value, 10)) : value }));
     };
     const handleNewEducationFormChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -178,6 +181,7 @@ export default function ProfilePage() {
         setNewEducationEntry(prev => ({ ...prev, [name]: name.includes('Year') ? (value === '' ? undefined : parseInt(value, 10)) : value }));
     };
 
+    //experience management
     const handleAddNewExperience = () => {
         clearMessages();
         if (!newExperienceEntry.title || !newExperienceEntry.company) { showAndClearMessage(setError, "Job Title and Company are required."); return; }
@@ -200,7 +204,7 @@ export default function ProfilePage() {
         } catch (err: any) { showAndClearMessage(setError, err.message); } finally { setSavingExperience(false); }
     };
     const handleStartEditExperience = (expItem: ExperienceItem) => {
-        setEditingEducationId(null); // Close other edit form
+        setEditingEducationId(null); //close any open education edit form
         setEditingExperienceId(expItem.id);
         setEditedExperienceData(expItem);
     };
@@ -228,7 +232,7 @@ export default function ProfilePage() {
                     <h1 className="text-3xl font-bold mb-1 text-gray-800">Your Professional Profile</h1>
                     <p className="text-gray-500 mb-6">Keep this information up-to-date to get the best job matches.</p>
 
-                    {/* --- Skills Section --- */}
+                    {/* skills Section */}
                     <div className="p-6 bg-white rounded-lg shadow-md mb-8">
                         <h2 className="text-2xl font-semibold mb-4">Skills</h2>
                         <div className="flex flex-wrap gap-2 mb-4 min-h-[40px]">
@@ -252,7 +256,7 @@ export default function ProfilePage() {
                         </div>
                     </div>
 
-                    {/* --- Education Section --- */}
+                    {/* education Section */}
                     <div className="p-6 bg-white rounded-lg shadow-md mb-8">
                         <h2 className="text-2xl font-semibold mb-4">Education</h2>
                         <div className="space-y-4 mb-6">
@@ -299,7 +303,7 @@ export default function ProfilePage() {
                         <div className="flex justify-end mt-6 border-t pt-4"><button onClick={handleSaveEducation} disabled={savingEducation} className={btnGreen}>{savingEducation ? 'Saving...' : 'Save All Education'}</button></div>
                     </div>
 
-                    {/* --- Experience Section --- */}
+                    {/* experience Section */}
                     <div className="p-6 bg-white rounded-lg shadow-md mb-8">
                         <h2 className="text-2xl font-semibold mb-4">Work Experience</h2>
                         <div className="space-y-4 mb-6">
@@ -349,7 +353,6 @@ export default function ProfilePage() {
                 </div>
             </div>
 
-            {/* --- Toast Notification Component --- */}
             <Toast 
                 message={successMessage || error || ''} 
                 show={!!successMessage || !!error}
@@ -358,4 +361,3 @@ export default function ProfilePage() {
         </>
     );
 }
-

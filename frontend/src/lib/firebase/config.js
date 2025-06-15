@@ -3,8 +3,7 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 //import { getAnalytics } from "firebase/analytics";
 
-// Your web app's Firebase configuration
-// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+//Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyA4v-MoNd_65i6XCztTH-22hr0PhP-NfTY",
   authDomain: "job-matcher-9c692.firebaseapp.com",
@@ -15,7 +14,7 @@ const firebaseConfig = {
   measurementId: "G-W4XCW1G14V"
 };
 
-// Initialize Firebase
+//initialize
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
