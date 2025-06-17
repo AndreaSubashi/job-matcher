@@ -5,13 +5,7 @@ import { getFirestore } from "firebase/firestore";
 
 //Firebase Config
 const firebaseConfig = {
-  apiKey: "AIzaSyA4v-MoNd_65i6XCztTH-22hr0PhP-NfTY",
-  authDomain: "job-matcher-9c692.firebaseapp.com",
-  projectId: "job-matcher-9c692",
-  storageBucket: "job-matcher-9c692.firebasestorage.app",
-  messagingSenderId: "71568991044",
-  appId: "1:71568991044:web:1dbd9fc05deb5495606d11",
-  measurementId: "G-W4XCW1G14V"
+
 };
 
 //initialize
