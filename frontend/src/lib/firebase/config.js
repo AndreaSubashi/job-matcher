@@ -5,7 +5,7 @@ import { getFirestore } from "firebase/firestore";
 
 //Firebase Config
 const firebaseConfig = {
-
+//private 
 };
 
 //initialize
